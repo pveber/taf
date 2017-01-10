@@ -71,18 +71,19 @@ module Zipper = struct
                                     estimated_duration = z.estimated_duration ;
                                     status = z.status } :: t }
 
-  let toggle_edit z =
-    if z.editing then
-      { z with editing = false }
-    else
-      { z with editing = true ;
-               next_deps =
-                 match z.next_deps with
-                 | [] -> [ Task.{ descr = "" ;
-                                  deps = [] ;
-                                  estimated_duration = None ;
-                                  status = TODO } ]
-                 | _ :: _ -> z.next_deps }
+  let start_edit z =
+    { z with editing = true ;
+             next_deps =
+               match z.next_deps with
+               | [] -> [ Task.{ descr = "" ;
+                                deps = [] ;
+                                estimated_duration = None ;
+                                status = TODO } ]
+               | _ :: _ -> z.next_deps }
+
+  let stop_edit z eol =
+    let r = { z with editing = false } in
+    if eol then next r else r
 
   let set_descr z descr =
     { z with next_deps = (
@@ -128,15 +129,15 @@ let rec update m = function
       | `Enter -> update m `Zipper_toggle_edit
       | _ -> return m
     )
-
   | `Zipper_enter -> return { zipper = Zipper.enter m.zipper }
   | `Zipper_leave -> return { zipper = Zipper.leave m.zipper }
   | `Zipper_next -> return { zipper = Zipper.next m.zipper }
   | `Zipper_prev -> return { zipper = Zipper.prev m.zipper }
   | `Zipper_toggle_edit ->
-    return
-      ~c:(if not m.zipper.Zipper.editing then [ Focus "task-edit" ] else [])
-      { zipper = Zipper.toggle_edit m.zipper }
+    if m.zipper.Zipper.editing then
+      return { zipper = Zipper.stop_edit m.zipper true }
+    else
+      return ~c:[ Focus "task-edit" ] { zipper = Zipper.start_edit m.zipper }
   | `Zipper_set_descr descr ->
     return { zipper = Zipper.set_descr m.zipper descr }
 
