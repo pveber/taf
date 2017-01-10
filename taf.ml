@@ -109,47 +109,58 @@ type model = {
   zipper : Zipper.t ;
 }
 
-type msg =
-  | Zipper_enter
-  | Zipper_leave
-  | Zipper_next
-  | Zipper_prev
-  | Zipper_toggle_edit
-  | Zipper_set_descr of string
+type 'msg Vdom.Cmd.t +=
+  | Focus of string
 
-(* this is nasty *)
-let editing = ref false
+let rec update m = function
+  | `Keydown k ->
+    if not m.zipper.Zipper.editing then
+      let msg = match k with
+        | `Left -> `Zipper_leave
+        | `Right -> `Zipper_enter
+        | `Up -> `Zipper_prev
+        | `Down -> `Zipper_next
+        | `Enter -> `Zipper_toggle_edit
+      in
+      update m msg
+    else (
+      match k with
+      | `Enter -> update m `Zipper_toggle_edit
+      | _ -> return m
+    )
 
-let update m = function
-  | Zipper_enter -> { zipper = Zipper.enter m.zipper }
-  | Zipper_leave -> { zipper = Zipper.leave m.zipper }
-  | Zipper_next -> { zipper = Zipper.next m.zipper }
-  | Zipper_prev -> { zipper = Zipper.prev m.zipper }
-  | Zipper_toggle_edit ->
-    editing := not !editing ;
-    { zipper = Zipper.toggle_edit m.zipper }
-  | Zipper_set_descr descr -> { zipper = Zipper.set_descr m.zipper descr }
+  | `Zipper_enter -> return { zipper = Zipper.enter m.zipper }
+  | `Zipper_leave -> return { zipper = Zipper.leave m.zipper }
+  | `Zipper_next -> return { zipper = Zipper.next m.zipper }
+  | `Zipper_prev -> return { zipper = Zipper.prev m.zipper }
+  | `Zipper_toggle_edit ->
+    return
+      ~c:(if not m.zipper.Zipper.editing then [ Focus "task-edit" ] else [])
+      { zipper = Zipper.toggle_edit m.zipper }
+  | `Zipper_set_descr descr ->
+    return { zipper = Zipper.set_descr m.zipper descr }
 
-let init = { zipper = Zipper.of_task root_task }
+let init = { zipper = Zipper.of_task root_task }, Cmd.batch []
 
 
 module View = struct
   let ul = elt "ul"
   let li = elt "li"
   let input = elt "input"
+  let strong = elt "strong"
 
   let rec zipper_in_context z contents =
     let open Zipper in
     match z.parent with
     | None -> contents
     | Some z' ->
-      zipper_in_context z' [ elt "ul" [ elt "li" (text z'.descr :: contents) ] ]
+      zipper_in_context z' [ ul [ li (text z'.descr :: contents) ] ]
 
   let zipper_current_level z =
     let open Zipper in
     let line ?(highlight = false) t =
-      let f x = if highlight then elt "strong" [ x ] else x in
-      elt "li" [ f (text t.Task.descr) ]
+      let f x = if highlight then strong [ x ] else x in
+      li [ f (text t.Task.descr) ]
     in
     let prev = List.map line (List.rev z.prev_deps) in
     let next = match z.next_deps with
@@ -159,14 +170,14 @@ module View = struct
           if z.editing then (
             let input =
               input ~a:[
-                str_prop "id" "task-descr" ;
+                str_prop "id" "task-edit" ;
                 str_prop "value" h.Task.descr ;
                 str_prop "placeholder" (
                   if h.Task.descr = "" then
                     "Enter a task description"
                   else ""
                 ) ;
-                oninput (fun s -> Zipper_set_descr s)
+                oninput (fun s -> `Zipper_set_descr s)
               ] []
             in
             li [ input ]
@@ -186,38 +197,43 @@ module View = struct
   let d = Js_browser.document
 end
 
-let my_app = simple_app ~init ~update ~view:View.view ()
+let app = app ~init ~update ~view:View.view ()
 
 
 (* Driver *)
 
 open Js_browser
 
-let run () =
-  let app = Vdom_blit.run my_app   (* run the application *) in
-  let keydown_handler ev =
-    if not !editing then (
-      match Event.which ev with
-      | 39 -> Vdom_blit.process app Zipper_enter
-      | 37 -> Vdom_blit.process app Zipper_leave
-      | 38 -> Vdom_blit.process app Zipper_prev
-      | 40 -> Vdom_blit.process app Zipper_next
-      | _ -> ()
+let cmd_handler ctx = function
+  | Focus id ->
+    (
+      match Document.get_element_by_id document id with
+      | None -> ()
+      | Some e -> Element.focus e
     ) ;
-    if Event.which ev = 13 then (
-      Vdom_blit.process app Zipper_toggle_edit ;
-      (
-        match Document.get_element_by_id document "task-descr" with
-        | None -> ()
-        | Some e -> Element.focus e
-      )
-    )
+    true
+  | _ -> false
+
+let () = Vdom_blit.(register (cmd {Cmd.f = cmd_handler}))
 
 
+let set_keydown_handler app =
+  let keydown_handler ev =
+    match Event.which ev with
+    | 39 -> Vdom_blit.process app (`Keydown `Right)
+    | 37 -> Vdom_blit.process app (`Keydown `Left)
+    | 38 -> Vdom_blit.process app (`Keydown `Up)
+    | 40 -> Vdom_blit.process app (`Keydown `Down)
+    | 13 -> Vdom_blit.process app (`Keydown `Enter)
+    | _ -> ()
   in
-  Window.add_event_listener window "keydown" keydown_handler false ;
+  Window.add_event_listener window "keydown" keydown_handler false
+
+let run () =
+  let app = Vdom_blit.run app in
+  set_keydown_handler app ;
   app
-  |> Vdom_blit.dom    (* get its root DOM container *)
-  |> Element.append_child (Document.body document)   (* insert the DOM in the document *)
+  |> Vdom_blit.dom
+  |> Element.append_child (Document.body document)
 
 let () = Window.set_onload window run
