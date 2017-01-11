@@ -149,13 +149,14 @@ module View = struct
   let li = elt "li"
   let input = elt "input"
   let strong = elt "strong"
+  let br () = elt "br" []
 
-  let rec zipper_in_context z contents =
+  let rec zipper_context z =
     let open Zipper in
     match z.parent with
-    | None -> contents
+    | None -> [ text z.descr ]
     | Some z' ->
-      zipper_in_context z' [ ul [ li (text z'.descr :: contents) ] ]
+      zipper_context z' @ [ text " > " ; text z.descr ]
 
   let zipper_current_level z =
     let open Zipper in
@@ -165,7 +166,7 @@ module View = struct
     in
     let prev = List.map line (List.rev z.prev_deps) in
     let next = match z.next_deps with
-      | [] -> []
+      | [] -> [ li [ strong [ text "+" ] ] ]
       | h :: t ->
         let current =
           if z.editing then (
@@ -185,13 +186,12 @@ module View = struct
           )
           else line ~highlight:true h
         in
-        current :: List.map line t
+        current :: List.map line t @ [ li [ text "+" ] ]
     in
-    [ul [ li [ text z.descr ; ul (prev @ next) ] ] ]
+    [ ul (prev @ next) ]
 
   let zipper z =
-    zipper_current_level z
-    |> zipper_in_context z
+    zipper_context z @ br () :: zipper_current_level z
 
   let view m = div (zipper m.zipper)
 
