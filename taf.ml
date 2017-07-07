@@ -1,113 +1,170 @@
+open Base
 open Vdom
 
+type date = string
+[@@deriving sexp]
 
 module Task = struct
   type t = {
+    id : id ;
     descr : string ;
-    estimated_duration : float option ; (* in hours *)
     status : status ;
-    deps : t list ;
+    due : date option ;
+    tags : string list ;
+    steps : t list ;
+    estimated_duration : float option ; (* in hours *)
+    duration : float option ;
+    deps : id list ;
+    history : (date * event) list ;
+  }
+  and id = string
+  and event =
+    | Created
+    | Started
+    | Canceled
+    | Done
+  and status = TODO | DONE | CANCELED
+  [@@deriving sexp]
+
+  let make ?(descr = "") ?(steps = []) () = {
+    id = "" ;
+    due = None ;
+    tags = [] ;
+    history = [] ;
+    descr ;
+    steps ;
+    deps = [] ;
+    estimated_duration = None ;
+    duration = None ;
+    status = TODO ;
   }
 
-  and status = TODO | DONE
-  [@@deriving sexp]
+
 end
 
-module Zipper = struct
+module List_zipper = struct
+  type 'a t = {
+    prev : 'a list ;
+    next : 'a list ;
+  }
+  [@@deriving sexp]
+
+  let make xs = {
+    prev = [] ;
+    next = xs ;
+  }
+
+  let singleton x = make [ x ]
+
+  let current xs = match xs.next with
+    | [] -> None
+    | h :: _ -> Some h
+
+  let set_current xs x = {
+    xs with next = x :: (
+      match xs.next with
+      | [] -> []
+      | _ :: t -> t
+    )
+  }
+
+  let next z =
+    match z.next with
+    | [] -> z
+    | h :: t ->
+      { prev = h :: z.prev ;
+        next = t }
+
+  let prev z =
+    match z.prev with
+    | [] -> z
+    | h :: t ->
+      { prev = t ;
+        next = h :: z.next ; }
+
+  let contents z = List.rev z.prev @ z.next
+
+  let is_empty z = List.is_empty z.prev && List.is_empty z.next
+
+  let is_at_end z = List.is_empty z.next
+end
+
+module Task_zipper = struct
   type t = {
-    descr : string ;
-    estimated_duration : float option ; (* in hours *)
-    status : Task.status ;
+    current_task : Task.t ; (* invariant: the real children of current_task are given by cursor *)
+    cursor : Task.t List_zipper.t ;
     editing : bool ;
-    prev_deps : Task.t list ;
-    next_deps : Task.t list ;
     parent : t option ;
   }
+  [@@deriving sexp]
 
   let of_task t =
     {
-      descr = t.Task.descr ;
-      estimated_duration = t.Task.estimated_duration ;
-      status = t.Task.status ;
+      current_task = t ;
+      cursor = List_zipper.make t.Task.steps ;
       editing = false ;
-      prev_deps = [] ;
-      next_deps = t.Task.deps ;
       parent = None ;
     }
 
   let next z =
-    match z.next_deps with
-    | [] -> z
-    | h :: t ->
-      { z with editing = false ;
-               prev_deps = h :: z.prev_deps ;
-               next_deps = t }
+    { z with editing = false ;
+             cursor = List_zipper.next z.cursor }
 
   let prev z =
-    match z.prev_deps with
-    | [] -> z
-    | h :: t ->
-      { z with editing = false ;
-               prev_deps = t ;
-               next_deps = h :: z.next_deps ; }
+    { z with editing = false ;
+             cursor = List_zipper.prev z.cursor }
+
+  let cursor z = List_zipper.current z.cursor
+
+  let set_cursor z u =
+    { z with cursor = List_zipper.set_current z.cursor u }
 
   let enter z =
-    match z.next_deps with
-    | [] -> z
-    | h :: _ ->
-      let res = of_task h in
+    match cursor z with
+    | None -> z
+    | Some t ->
+      let res = of_task t in
       { res with parent = Some z }
 
   let leave z =
     match z.parent with
     | None -> z
     | Some p ->
-      match p.next_deps with
-      | [] -> assert false (* otherwise we couldn't have entered [z] in the first place *)
-      | h :: t ->
-        { p with editing = false ;
-                 next_deps = Task.{ descr = z.descr ;
-                                    deps = List.rev z.prev_deps @ z.next_deps ;
-                                    estimated_duration = z.estimated_duration ;
-                                    status = z.status } :: t }
+      let z_u = { z.current_task with Task.steps = List_zipper.contents z.cursor } in
+      { p with editing = false ;
+               cursor = List_zipper.set_current p.cursor z_u }
 
   let start_edit z =
     { z with editing = true ;
-             next_deps =
-               match z.next_deps with
-               | [] -> [ Task.{ descr = "" ;
-                                deps = [] ;
-                                estimated_duration = None ;
-                                status = TODO } ]
-               | _ :: _ -> z.next_deps }
+             cursor = (
+               if List_zipper.is_at_end z.cursor then
+                 List_zipper.set_current z.cursor (Task.make ())
+               else
+                 z.cursor
+             ) ; }
 
   let stop_edit z eol =
     let r = { z with editing = false } in
     if eol then next r else r
 
   let set_descr z descr =
-    { z with next_deps = (
-          match z.next_deps with
-          | [] -> [ Task.{ descr ; deps = [] ; estimated_duration = None ; status = TODO } ]
-          | h :: t -> Task.{ h with descr } :: t
-        ) }
+    let u = match cursor z with
+      | None -> Task.make ~descr ()
+      | Some u -> { u with Task.descr }
+    in
+    set_cursor z u
 end
 
 
-let root_task = Task.{
-  descr = "Root" ;
-  deps = [
-    { descr = "X"  ; deps = [] ; estimated_duration = None ; status = TODO } ;
-    { descr = "Y" ; deps = [] ; estimated_duration = None ; status = TODO } ;
-  ] ;
-  estimated_duration = None ;
-  status = TODO ;
-}
+let root_task =
+  let x = Task.make ~descr:"X" () in
+  let y = Task.make ~descr:"Y" () in
+  Task.make ~descr:"Root" ~steps:[x ; y] ()
 
 (* Definition of the vdom application *)
 
 type model = {
-  zipper : Zipper.t ;
+  zipper : Task_zipper.t ;
 }
 
 type 'msg Vdom.Cmd.t +=
@@ -115,7 +172,7 @@ type 'msg Vdom.Cmd.t +=
 
 let rec update m = function
   | `Keydown k ->
-    if not m.zipper.Zipper.editing then
+    if not m.zipper.Task_zipper.editing then
       let msg = match k with
         | `Left -> `Zipper_leave
         | `Right -> `Zipper_enter
@@ -129,19 +186,19 @@ let rec update m = function
       | `Enter -> update m `Zipper_toggle_edit
       | _ -> return m
     )
-  | `Zipper_enter -> return { zipper = Zipper.enter m.zipper }
-  | `Zipper_leave -> return { zipper = Zipper.leave m.zipper }
-  | `Zipper_next -> return { zipper = Zipper.next m.zipper }
-  | `Zipper_prev -> return { zipper = Zipper.prev m.zipper }
+  | `Zipper_enter -> return { zipper = Task_zipper.enter m.zipper }
+  | `Zipper_leave -> return { zipper = Task_zipper.leave m.zipper }
+  | `Zipper_next -> return { zipper = Task_zipper.next m.zipper }
+  | `Zipper_prev -> return { zipper = Task_zipper.prev m.zipper }
   | `Zipper_toggle_edit ->
-    if m.zipper.Zipper.editing then
-      return { zipper = Zipper.stop_edit m.zipper true }
+    if m.zipper.Task_zipper.editing then
+      return { zipper = Task_zipper.stop_edit m.zipper true }
     else
-      return ~c:[ Focus "task-edit" ] { zipper = Zipper.start_edit m.zipper }
+      return ~c:[ Focus "task-edit" ] { zipper = Task_zipper.start_edit m.zipper }
   | `Zipper_set_descr descr ->
-    return { zipper = Zipper.set_descr m.zipper descr }
+    return { zipper = Task_zipper.set_descr m.zipper descr }
 
-let init = { zipper = Zipper.of_task root_task }, Cmd.batch []
+let init = { zipper = Task_zipper.of_task root_task }, Cmd.batch []
 
 
 module View = struct
@@ -152,20 +209,20 @@ module View = struct
   let br () = elt "br" []
 
   let rec zipper_context z =
-    let open Zipper in
+    let open Task_zipper in
     match z.parent with
-    | None -> [ text z.descr ]
+    | None -> [ text z.current_task.Task.descr ]
     | Some z' ->
-      zipper_context z' @ [ text " > " ; text z.descr ]
+      zipper_context z' @ [ text " > " ; text z.current_task.Task.descr ]
 
   let zipper_current_level z =
-    let open Zipper in
+    let open Task_zipper in
     let line ?(highlight = false) t =
       let f x = if highlight then strong [ x ] else x in
       li [ f (text t.Task.descr) ]
     in
-    let prev = List.map line (List.rev z.prev_deps) in
-    let next = match z.next_deps with
+    let prev = List.map ~f:line (List.rev z.cursor.List_zipper.prev) in
+    let next = match z.cursor.List_zipper.next with
       | [] -> [ li [ strong [ text "+" ] ] ]
       | h :: t ->
         let current =
@@ -175,7 +232,7 @@ module View = struct
                 str_prop "id" "task-edit" ;
                 str_prop "value" h.Task.descr ;
                 str_prop "placeholder" (
-                  if h.Task.descr = "" then
+                  if String.(h.Task.descr = "") then
                     "Enter a task description"
                   else ""
                 ) ;
@@ -186,14 +243,21 @@ module View = struct
           )
           else line ~highlight:true h
         in
-        current :: List.map line t @ [ li [ text "+" ] ]
+        current :: List.map ~f:line t @ [ li [ text "+" ] ]
     in
     [ ul (prev @ next) ]
 
   let zipper z =
     zipper_context z @ br () :: zipper_current_level z
 
-  let view m = div (zipper m.zipper)
+  let debug_task_zipper z =
+    Task_zipper.sexp_of_t z
+    |> Sexp.to_string_hum
+    |> text
+    |> (fun x -> [ x ])
+    |> elt "pre"
+
+  let view m = div (zipper m.zipper @ [ debug_task_zipper m.zipper ])
 
   let d = Js_browser.document
 end
