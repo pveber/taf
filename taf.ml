@@ -153,6 +153,12 @@ module Task_zipper = struct
       | Some u -> { u with Task.descr }
     in
     set_cursor z u
+
+  let rec contents z =
+    match z.parent with
+    | None ->
+      { z.current_task with Task.steps = List_zipper.contents z.cursor }
+    | Some _ -> contents (leave z)
 end
 
 
@@ -207,6 +213,7 @@ module View = struct
   let input = elt "input"
   let strong = elt "strong"
   let br () = elt "br" []
+  let pre code = elt "pre" [ text code ]
 
   let rec zipper_context z =
     let open Task_zipper in
@@ -250,14 +257,19 @@ module View = struct
   let zipper z =
     zipper_context z @ br () :: zipper_current_level z
 
+
   let debug_task_zipper z =
     Task_zipper.sexp_of_t z
     |> Sexp.to_string_hum
-    |> text
-    |> (fun x -> [ x ])
-    |> elt "pre"
+    |> pre
 
-  let view m = div (zipper m.zipper @ [ debug_task_zipper m.zipper ])
+  let debug_task_zipper2 z =
+    Task_zipper.contents z
+    |> Task.sexp_of_t
+    |> Sexp.to_string_hum
+    |> pre
+
+  let view m = div (zipper m.zipper @ [ debug_task_zipper2 m.zipper ])
 
   let d = Js_browser.document
 end
