@@ -175,6 +175,7 @@ type model = {
 
 type 'msg Vdom.Cmd.t +=
   | Focus of string
+  | Save of Task.t
 
 let rec update m = function
   | `Keydown k ->
@@ -185,6 +186,7 @@ let rec update m = function
         | `Up -> `Zipper_prev
         | `Down -> `Zipper_next
         | `Enter -> `Zipper_toggle_edit
+        | `S -> `Save
       in
       update m msg
     else (
@@ -203,9 +205,8 @@ let rec update m = function
       return ~c:[ Focus "task-edit" ] { zipper = Task_zipper.start_edit m.zipper }
   | `Zipper_set_descr descr ->
     return { zipper = Task_zipper.set_descr m.zipper descr }
-
-let init = { zipper = Task_zipper.of_task root_task }, Cmd.batch []
-
+  | `Save ->
+    return ~c:[ Save (Task_zipper.contents m.zipper) ] m
 
 module View = struct
   let ul = elt "ul"
@@ -274,9 +275,6 @@ module View = struct
   let d = Js_browser.document
 end
 
-let app = app ~init ~update ~view:View.view ()
-
-
 (* Driver *)
 
 open Js_browser
@@ -287,6 +285,17 @@ let cmd_handler ctx = function
       match Document.get_element_by_id document id with
       | None -> ()
       | Some e -> Element.focus e
+    ) ;
+    true
+  | Save u -> (
+      match Window.local_storage window with
+      | None -> Window.alert window "no local storage !"
+      | Some storage ->
+        let serialized =
+          Task.sexp_of_t u
+          |> Sexp.to_string_hum
+        in
+        Storage.set_item storage "task" serialized
     ) ;
     true
   | _ -> false
@@ -302,11 +311,26 @@ let set_keydown_handler app =
     | 38 -> Vdom_blit.process app (`Keydown `Up)
     | 40 -> Vdom_blit.process app (`Keydown `Down)
     | 13 -> Vdom_blit.process app (`Keydown `Enter)
+    | 83 -> Vdom_blit.process app (`Keydown `S)
     | _ -> ()
   in
   Window.add_event_listener window "keydown" keydown_handler false
 
+let initialize_data () =
+  match Window.local_storage window with
+  | None -> root_task
+  | Some storage ->
+    match Storage.get_item storage "task" with
+    | None -> root_task
+    | Some serialized ->
+      serialized
+      |> Sexplib.Sexp.of_string
+      |> Task.t_of_sexp
+
 let run () =
+  let data = initialize_data () in
+  let init = { zipper = Task_zipper.of_task data }, Cmd.batch [] in
+  let app = app ~init ~update ~view:View.view () in
   let app = Vdom_blit.run app in
   set_keydown_handler app ;
   app
