@@ -1,6 +1,18 @@
 open Base
 open Vdom
 
+let ul = elt "ul"
+let li = elt "li"
+let input = elt "input"
+let strong = elt "strong"
+let br () = elt "br" []
+let pre code = elt "pre" [ text code ]
+let tr = elt "tr"
+let td = elt "td"
+let table = elt "table"
+
+let strong_if b x = if b then strong [ x ] else x
+
 type date = string
 [@@deriving sexp]
 
@@ -48,6 +60,7 @@ module Project = struct
   type t = {
     name : string ;
     description : string ;
+    created : date ;
     milestones : Task.t list ;
   }
   [@@deriving sexp]
@@ -192,81 +205,59 @@ module Db = struct
 end
 
 (* Definition of the vdom application *)
+type 'msg Vdom.Cmd.t +=
+  | Focus of string
+  | Save of Task.t
 
-type model =
-  | Project_list_browser of {
-      db : Db.t ;
-      cursor : Project.t List_zipper.t ;
-    }
-  | Task_tree_browser of {
+
+module Task_tree_browser = struct
+  type model = {
       db : Db.t ;
       project : Project.t ;
       zipper : Task_zipper.t ;
     }
 
-type 'msg Vdom.Cmd.t +=
-  | Focus of string
-  | Save of Task.t
+  let rec update ({ zipper } as m) =
+    let return ?c z = return { m with zipper } in
+    function
+    | `Keydown k ->
+      if not zipper.Task_zipper.editing then
+        let msg = match k with
+          | `Left -> `TTB_leave
+          | `Right -> `TTB_enter
+          | `Up -> `TTB_prev
+          | `Down -> `TTB_next
+          | `Enter -> `TTB_toggle_edit
+          | `S -> `Save
+        in
+        update m msg
+      else (
+        match k with
+        | `Enter -> update m `TTB_toggle_edit
+        | _ -> return m
+      )
+    | `TTB_enter -> return (Task_zipper.enter zipper)
+    | `TTB_leave -> return (Task_zipper.leave zipper)
+    | `TTB_next  -> return (Task_zipper.next  zipper)
+    | `TTB_prev  -> return (Task_zipper.prev  zipper)
+    | `TTB_toggle_edit ->
+      if zipper.Task_zipper.editing then
+        return (Task_zipper.stop_edit zipper true)
+      else
+        return ~c:[ Focus "task-edit" ] (Task_zipper.start_edit zipper)
+    | `TTB_set_descr descr ->
+      return (Task_zipper.set_descr zipper descr)
+    | `Save ->
+      return ~c:[ Save (Task_zipper.contents zipper) ] zipper
 
-let rec update m ev =
-  match m with
-  | Task_tree_browser ({ zipper } as b) -> (
-      let return_ttb ?c z = return ?c (Task_tree_browser { b with zipper = z }) in
-      match ev with
-      | `Keydown k ->
-        if not zipper.Task_zipper.editing then
-          let msg = match k with
-            | `Left -> `TTB_leave
-            | `Right -> `TTB_enter
-            | `Up -> `TTB_prev
-            | `Down -> `TTB_next
-            | `Enter -> `TTB_toggle_edit
-            | `S -> `Save
-          in
-          update m msg
-        else (
-          match k with
-          | `Enter -> update m `TTB_toggle_edit
-          | _ -> return m
-        )
-      | `TTB_enter -> return_ttb (Task_zipper.enter zipper)
-      | `TTB_leave -> return_ttb (Task_zipper.leave zipper)
-      | `TTB_next  -> return_ttb (Task_zipper.next  zipper)
-      | `TTB_prev  -> return_ttb (Task_zipper.prev  zipper)
-      | `TTB_toggle_edit ->
-        if zipper.Task_zipper.editing then
-          return_ttb (Task_zipper.stop_edit zipper true)
-        else
-          return_ttb ~c:[ Focus "task-edit" ] (Task_zipper.start_edit zipper)
-      | `TTB_set_descr descr ->
-        return_ttb (Task_zipper.set_descr zipper descr)
-      | `Save ->
-        return_ttb ~c:[ Save (Task_zipper.contents zipper) ] zipper
-    )
-  | Project_list_browser _ ->
-    return m
-
-module View = struct
-  let ul = elt "ul"
-  let li = elt "li"
-  let input = elt "input"
-  let strong = elt "strong"
-  let br () = elt "br" []
-  let pre code = elt "pre" [ text code ]
-  let tr = elt "tr"
-  let td = elt "td"
-  let table = elt "table"
-
-  let strong_if b x = if b then strong [ x ] else x
-
-  let rec view_ttb_context z =
+  let rec view_context z =
     let open Task_zipper in
     match z.parent with
     | None -> [ text z.current_task.Task.descr ]
     | Some z' ->
-      view_ttb_context z' @ [ text " > " ; text z.current_task.Task.descr ]
+      view_context z' @ [ text " > " ; text z.current_task.Task.descr ]
 
-  let view_ttb_current_level z =
+  let view_current_level z =
     let open Task_zipper in
     let line ?(highlight = false) txt =
       li [ strong_if highlight (text txt) ]
@@ -297,22 +288,31 @@ module View = struct
     in
     [ ul (List_zipper.positional_map z.cursor ~f:(fun x -> Some (f x))) ]
 
-  let view_ttb z =
-    view_ttb_context z @ br () :: view_ttb_current_level z
-
-
-  let debug_task_ttb z =
+  let debug_task z =
     Task_zipper.sexp_of_t z
     |> Sexp.to_string_hum
     |> pre
 
-  let debug_task_ttb2 z =
+  let debug_task2 z =
     Task_zipper.contents z
     |> Task.sexp_of_t
     |> Sexp.to_string_hum
     |> pre
 
-  let view_pl cursor =
+  let view ttb =
+    view_context ttb.zipper @ br () :: view_current_level ttb.zipper
+
+end
+
+module Project_list_browser = struct
+  type model = {
+    db : Db.t ;
+    cursor : Project.t List_zipper.t ;
+  }
+
+  let update m ev = m
+
+  let view { cursor } =
     let line ?(highlight = false) txt =
       tr [ td [ strong_if highlight (text txt) ] ]
     in
@@ -325,15 +325,29 @@ module View = struct
     in
     div [ table (List_zipper.positional_map cursor ~f) ]
 
-
-  let view = function
-    | Task_tree_browser ttb ->
-      div (view_ttb ttb.zipper @ [ debug_task_ttb2 ttb.zipper ])
-    | Project_list_browser { cursor } ->
-      view_pl cursor
-
-  let d = Js_browser.document
 end
+
+type model =
+  | Project_list_browser of Project_list_browser.model
+  | Task_tree_browser of Task_tree_browser.model
+
+let rec update m ev =
+  match m with
+  | Task_tree_browser ttb ->
+    let ttb, cmd = Task_tree_browser.update ttb ev in
+    Task_tree_browser ttb, cmd
+
+  (* | New_project form -> ( *)
+  (*     match ev with *)
+  (*     |  *)
+  | Project_list_browser _ ->
+    return m
+
+let view = function
+  | Task_tree_browser ttb ->
+    div (Task_tree_browser.view ttb @ [ Task_tree_browser.debug_task2 ttb.Task_tree_browser.zipper ])
+  | Project_list_browser plb ->
+    Project_list_browser.view plb
 
 open Js_browser
 
@@ -390,7 +404,7 @@ let initialize_db () =
 
 let init db =
   Project_list_browser {
-    db ;
+    Project_list_browser.db ;
     cursor = List_zipper.make db.Db.projects
   },
   Cmd.batch []
@@ -398,7 +412,7 @@ let init db =
 let run () =
   let db = initialize_db () in
   let init = init db in
-  let app = app ~init ~update ~view:View.view () in
+  let app = app ~init ~update ~view () in
   let app = Vdom_blit.run app in
   set_keydown_handler app ;
   app
