@@ -44,6 +44,15 @@ module Task = struct
 
 end
 
+module Project = struct
+  type t = {
+    name : string ;
+    description : string ;
+    milestones : Task.t list ;
+  }
+  [@@deriving sexp]
+end
+
 module List_zipper = struct
   type 'a t = {
     prev : 'a list ;
@@ -163,52 +172,69 @@ module Task_zipper = struct
     | Some _ -> contents (leave z)
 end
 
+module Db = struct
+  type t = {
+    projects : Project.t list ;
+  }
+  [@@deriving sexp]
 
-let root_task =
-  let x = Task.make ~descr:"X" () in
-  let y = Task.make ~descr:"Y" () in
-  Task.make ~descr:"Root" ~steps:[x ; y] ()
+  let make () = { projects  = [] }
+end
 
 (* Definition of the vdom application *)
 
-type model = {
-  zipper : Task_zipper.t ;
-}
+type model =
+  | Project_list_browser of {
+      db : Db.t ;
+      cursor : Project.t List_zipper.t ;
+    }
+  | Task_tree_browser of {
+      db : Db.t ;
+      project : Project.t ;
+      zipper : Task_zipper.t ;
+    }
 
 type 'msg Vdom.Cmd.t +=
   | Focus of string
   | Save of Task.t
 
-let rec update m = function
-  | `Keydown k ->
-    if not m.zipper.Task_zipper.editing then
-      let msg = match k with
-        | `Left -> `Zipper_leave
-        | `Right -> `Zipper_enter
-        | `Up -> `Zipper_prev
-        | `Down -> `Zipper_next
-        | `Enter -> `Zipper_toggle_edit
-        | `S -> `Save
-      in
-      update m msg
-    else (
-      match k with
-      | `Enter -> update m `Zipper_toggle_edit
-      | _ -> return m
+let rec update m ev =
+  match m with
+  | Task_tree_browser ({ zipper } as b) -> (
+      let update_zipper ?c z = return ?c (Task_tree_browser { b with zipper = z }) in
+      match ev with
+      | `Keydown k ->
+        if not zipper.Task_zipper.editing then
+          let msg = match k with
+            | `Left -> `Zipper_leave
+            | `Right -> `Zipper_enter
+            | `Up -> `Zipper_prev
+            | `Down -> `Zipper_next
+            | `Enter -> `Zipper_toggle_edit
+            | `S -> `Save
+          in
+          update m msg
+        else (
+          match k with
+          | `Enter -> update m `Zipper_toggle_edit
+          | _ -> return m
+        )
+      | `Zipper_enter -> update_zipper (Task_zipper.enter zipper)
+      | `Zipper_leave -> update_zipper (Task_zipper.leave zipper)
+      | `Zipper_next  -> update_zipper (Task_zipper.next  zipper)
+      | `Zipper_prev  -> update_zipper (Task_zipper.prev  zipper)
+      | `Zipper_toggle_edit ->
+        if zipper.Task_zipper.editing then
+          update_zipper (Task_zipper.stop_edit zipper true)
+        else
+          update_zipper ~c:[ Focus "task-edit" ] (Task_zipper.start_edit zipper)
+      | `Zipper_set_descr descr ->
+        update_zipper (Task_zipper.set_descr zipper descr)
+      | `Save ->
+        update_zipper ~c:[ Save (Task_zipper.contents zipper) ] zipper
     )
-  | `Zipper_enter -> return { zipper = Task_zipper.enter m.zipper }
-  | `Zipper_leave -> return { zipper = Task_zipper.leave m.zipper }
-  | `Zipper_next -> return { zipper = Task_zipper.next m.zipper }
-  | `Zipper_prev -> return { zipper = Task_zipper.prev m.zipper }
-  | `Zipper_toggle_edit ->
-    if m.zipper.Task_zipper.editing then
-      return { zipper = Task_zipper.stop_edit m.zipper true }
-    else
-      return ~c:[ Focus "task-edit" ] { zipper = Task_zipper.start_edit m.zipper }
-  | `Zipper_set_descr descr ->
-    return { zipper = Task_zipper.set_descr m.zipper descr }
-  | `Save ->
-    return ~c:[ Save (Task_zipper.contents m.zipper) ] m
+  | Project_list_browser _ ->
+    return m
 
 module View = struct
   let ul = elt "ul"
@@ -272,12 +298,13 @@ module View = struct
     |> Sexp.to_string_hum
     |> pre
 
-  let view m = div (zipper m.zipper @ [ debug_task_zipper2 m.zipper ])
+  let view = function
+    | Task_tree_browser ttb ->
+      div (zipper ttb.zipper @ [ debug_task_zipper2 ttb.zipper ])
+    | Project_list_browser _ -> div []
 
   let d = Js_browser.document
 end
-
-(* Driver *)
 
 open Js_browser
 
@@ -318,20 +345,30 @@ let set_keydown_handler app =
   in
   Window.add_event_listener window "keydown" keydown_handler false
 
-let initialize_data () =
+let initialize_db () =
   match Window.local_storage window with
-  | None -> root_task
+  | None ->
+    let msg = "No local storage, stopping program" in
+    Window.alert window msg ;
+    failwith msg
   | Some storage ->
-    match Storage.get_item storage "task" with
-    | None -> root_task
+    match Storage.get_item storage "db" with
+    | None -> Db.make ()
     | Some serialized ->
       serialized
       |> Sexplib.Sexp.of_string
-      |> Task.t_of_sexp
+      |> Db.t_of_sexp
+
+let init db =
+  Project_list_browser {
+    db ;
+    cursor = List_zipper.make db.Db.projects
+  },
+  Cmd.batch []
 
 let run () =
-  let data = initialize_data () in
-  let init = { zipper = Task_zipper.of_task data }, Cmd.batch [] in
+  let db = initialize_db () in
+  let init = init db in
   let app = app ~init ~update ~view:View.view () in
   let app = Vdom_blit.run app in
   set_keydown_handler app ;
