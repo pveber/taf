@@ -201,37 +201,37 @@ type 'msg Vdom.Cmd.t +=
 let rec update m ev =
   match m with
   | Task_tree_browser ({ zipper } as b) -> (
-      let update_zipper ?c z = return ?c (Task_tree_browser { b with zipper = z }) in
+      let return_ttb ?c z = return ?c (Task_tree_browser { b with zipper = z }) in
       match ev with
       | `Keydown k ->
         if not zipper.Task_zipper.editing then
           let msg = match k with
-            | `Left -> `Zipper_leave
-            | `Right -> `Zipper_enter
-            | `Up -> `Zipper_prev
-            | `Down -> `Zipper_next
-            | `Enter -> `Zipper_toggle_edit
+            | `Left -> `TTB_leave
+            | `Right -> `TTB_enter
+            | `Up -> `TTB_prev
+            | `Down -> `TTB_next
+            | `Enter -> `TTB_toggle_edit
             | `S -> `Save
           in
           update m msg
         else (
           match k with
-          | `Enter -> update m `Zipper_toggle_edit
+          | `Enter -> update m `TTB_toggle_edit
           | _ -> return m
         )
-      | `Zipper_enter -> update_zipper (Task_zipper.enter zipper)
-      | `Zipper_leave -> update_zipper (Task_zipper.leave zipper)
-      | `Zipper_next  -> update_zipper (Task_zipper.next  zipper)
-      | `Zipper_prev  -> update_zipper (Task_zipper.prev  zipper)
-      | `Zipper_toggle_edit ->
+      | `TTB_enter -> return_ttb (Task_zipper.enter zipper)
+      | `TTB_leave -> return_ttb (Task_zipper.leave zipper)
+      | `TTB_next  -> return_ttb (Task_zipper.next  zipper)
+      | `TTB_prev  -> return_ttb (Task_zipper.prev  zipper)
+      | `TTB_toggle_edit ->
         if zipper.Task_zipper.editing then
-          update_zipper (Task_zipper.stop_edit zipper true)
+          return_ttb (Task_zipper.stop_edit zipper true)
         else
-          update_zipper ~c:[ Focus "task-edit" ] (Task_zipper.start_edit zipper)
-      | `Zipper_set_descr descr ->
-        update_zipper (Task_zipper.set_descr zipper descr)
+          return_ttb ~c:[ Focus "task-edit" ] (Task_zipper.start_edit zipper)
+      | `TTB_set_descr descr ->
+        return_ttb (Task_zipper.set_descr zipper descr)
       | `Save ->
-        update_zipper ~c:[ Save (Task_zipper.contents zipper) ] zipper
+        return_ttb ~c:[ Save (Task_zipper.contents zipper) ] zipper
     )
   | Project_list_browser _ ->
     return m
@@ -244,14 +244,14 @@ module View = struct
   let br () = elt "br" []
   let pre code = elt "pre" [ text code ]
 
-  let rec zipper_context z =
+  let rec view_ttb_context z =
     let open Task_zipper in
     match z.parent with
     | None -> [ text z.current_task.Task.descr ]
     | Some z' ->
-      zipper_context z' @ [ text " > " ; text z.current_task.Task.descr ]
+      view_ttb_context z' @ [ text " > " ; text z.current_task.Task.descr ]
 
-  let zipper_current_level z =
+  let view_ttb_current_level z =
     let open Task_zipper in
     let line ?(highlight = false) t =
       let f x = if highlight then strong [ x ] else x in
@@ -272,7 +272,7 @@ module View = struct
                     "Enter a task description"
                   else ""
                 ) ;
-                oninput (fun s -> `Zipper_set_descr s)
+                oninput (fun s -> `TTB_set_descr s)
               ] []
             in
             li [ input ]
@@ -283,16 +283,16 @@ module View = struct
     in
     [ ul (prev @ next) ]
 
-  let zipper z =
-    zipper_context z @ br () :: zipper_current_level z
+  let view_ttb z =
+    view_ttb_context z @ br () :: view_ttb_current_level z
 
 
-  let debug_task_zipper z =
+  let debug_task_ttb z =
     Task_zipper.sexp_of_t z
     |> Sexp.to_string_hum
     |> pre
 
-  let debug_task_zipper2 z =
+  let debug_task_ttb2 z =
     Task_zipper.contents z
     |> Task.sexp_of_t
     |> Sexp.to_string_hum
@@ -300,7 +300,7 @@ module View = struct
 
   let view = function
     | Task_tree_browser ttb ->
-      div (zipper ttb.zipper @ [ debug_task_zipper2 ttb.zipper ])
+      div (view_ttb ttb.zipper @ [ debug_task_ttb2 ttb.zipper ])
     | Project_list_browser _ -> div []
 
   let d = Js_browser.document
