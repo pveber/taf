@@ -8,6 +8,7 @@ module Task = struct
   type t = {
     id : id ;
     descr : string ;
+    note : string ;
     status : status ;
     due : date option ;
     tags : string list ;
@@ -32,6 +33,7 @@ module Task = struct
     tags = [] ;
     history = [] ;
     descr ;
+    note = "" ;
     steps ;
     deps = [] ;
     estimated_duration = None ;
