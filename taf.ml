@@ -103,9 +103,11 @@ module List_zipper = struct
     let l1 = List.filter_map z.prev ~f:(fun x -> f (`Prev x)) in
     let l2 = match z.next with
       | [] -> List.filter_opt [f `Cursor_at_end]
-      | h :: t -> List.filter_opt (f (`Cursor h) :: List.map t ~f:(fun x -> f (`Next x)))
+      | h :: t ->
+        f (`Cursor h) :: List.map t ~f:(fun x -> f (`Next x)) @ [ f `End ]
+        |> List.filter_opt
     in
-    l1 @ l2 @ (List.filter_map ~f [ `End ])
+    l1 @ l2
 end
 
 module Task_zipper = struct
@@ -251,6 +253,9 @@ module View = struct
   let strong = elt "strong"
   let br () = elt "br" []
   let pre code = elt "pre" [ text code ]
+  let tr = elt "tr"
+  let td = elt "td"
+  let table = elt "table"
 
   let strong_if b x = if b then strong [ x ] else x
 
@@ -307,10 +312,25 @@ module View = struct
     |> Sexp.to_string_hum
     |> pre
 
+  let view_pl cursor =
+    let line ?(highlight = false) txt =
+      tr [ td [ strong_if highlight (text txt) ] ]
+    in
+    let pline ?highlight p = line ?highlight p.Project.description in
+    let f = function
+      | `Prev x | `Next x -> Some (pline x)
+      | `Cursor x -> Some (pline ~highlight:true x)
+      | `Cursor_at_end -> None
+      | `End -> None
+    in
+    div [ table (List_zipper.positional_map cursor ~f) ]
+
+
   let view = function
     | Task_tree_browser ttb ->
       div (view_ttb ttb.zipper @ [ debug_task_ttb2 ttb.zipper ])
-    | Project_list_browser _ -> div []
+    | Project_list_browser { cursor } ->
+      view_pl cursor
 
   let d = Js_browser.document
 end
