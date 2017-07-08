@@ -98,6 +98,14 @@ module List_zipper = struct
   let is_empty z = List.is_empty z.prev && List.is_empty z.next
 
   let is_at_end z = List.is_empty z.next
+
+  let positional_map z ~f =
+    let l1 = List.filter_map z.prev ~f:(fun x -> f (`Prev x)) in
+    let l2 = match z.next with
+      | [] -> List.filter_opt [f `Cursor_at_end]
+      | h :: t -> List.filter_opt (f (`Cursor h) :: List.map t ~f:(fun x -> f (`Next x)))
+    in
+    l1 @ l2 @ (List.filter_map ~f [ `End ])
 end
 
 module Task_zipper = struct
@@ -244,6 +252,8 @@ module View = struct
   let br () = elt "br" []
   let pre code = elt "pre" [ text code ]
 
+  let strong_if b x = if b then strong [ x ] else x
+
   let rec view_ttb_context z =
     let open Task_zipper in
     match z.parent with
@@ -253,22 +263,20 @@ module View = struct
 
   let view_ttb_current_level z =
     let open Task_zipper in
-    let line ?(highlight = false) t =
-      let f x = if highlight then strong [ x ] else x in
-      li [ f (text t.Task.descr) ]
+    let line ?(highlight = false) txt =
+      li [ strong_if highlight (text txt) ]
     in
-    let prev = List.map ~f:line (List.rev z.cursor.List_zipper.prev) in
-    let next = match z.cursor.List_zipper.next with
-      | [] -> [ li [ strong [ text "+" ] ] ]
-      | h :: t ->
-        let current =
+    let task_line ?highlight u = line ?highlight u.Task.descr in
+    let f = function
+      | `Prev x | `Next x -> task_line x
+      | `Cursor x -> (
           if z.editing then (
             let input =
               input ~a:[
                 str_prop "id" "task-edit" ;
-                str_prop "value" h.Task.descr ;
+                str_prop "value" x.Task.descr ;
                 str_prop "placeholder" (
-                  if String.(h.Task.descr = "") then
+                  if String.(x.Task.descr = "") then
                     "Enter a task description"
                   else ""
                 ) ;
@@ -277,11 +285,12 @@ module View = struct
             in
             li [ input ]
           )
-          else line ~highlight:true h
-        in
-        current :: List.map ~f:line t @ [ li [ text "+" ] ]
+          else task_line ~highlight:true x
+        )
+      | `Cursor_at_end -> line ~highlight:true "+"
+      | `End -> line "+"
     in
-    [ ul (prev @ next) ]
+    [ ul (List_zipper.positional_map z.cursor ~f:(fun x -> Some (f x))) ]
 
   let view_ttb z =
     view_ttb_context z @ br () :: view_ttb_current_level z
