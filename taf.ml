@@ -68,6 +68,13 @@ module Project = struct
     milestones : Task.t list ;
   }
   [@@deriving sexp]
+
+  let make ~name ~description () = {
+    name ;
+    description ;
+    created = "" ;
+    milestones = [] ;
+  }
 end
 
 module List_zipper = struct
@@ -206,6 +213,8 @@ module Db = struct
   [@@deriving sexp]
 
   let make () = { projects  = [] }
+
+  let add_project db p = { projects = db.projects @ [ p ] }
 end
 
 (* Definition of the vdom application *)
@@ -411,7 +420,11 @@ let rec update m ev =
     let npf, cmd = update npf ev in
     let m =
       if npf.submitted then
-        Project_list_browser Project_list_browser.(init npf.db)
+        Project_list_browser (
+          Project.make ~name:npf.name ~description:npf.description ()
+          |> Db.add_project npf.db
+          |> Project_list_browser.init
+        )
       else
         New_project_form npf
     in
