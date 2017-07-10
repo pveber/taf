@@ -124,7 +124,7 @@ module List_zipper = struct
   let is_at_end z = List.is_empty z.next
 
   let positional_map z ~f =
-    let l1 = List.filter_map z.prev ~f:(fun x -> f (`Prev x)) in
+    let l1 = List.rev_filter_map z.prev ~f:(fun x -> f (`Prev x)) in
     let l2 = match z.next with
       | [] -> List.filter_opt [f `Cursor_at_end]
       | h :: t ->
@@ -329,6 +329,8 @@ module Project_list_browser = struct
   let update m =
     function
     | `Keydown `C -> return { m with event = Some `Switch_to_new_project_form }
+    | `Keydown `Down -> return { m with cursor = List_zipper.next m.cursor }
+    | `Keydown `Up  -> return { m with cursor = List_zipper.prev m.cursor }
     | _ -> return m
 
   let view { cursor } =
