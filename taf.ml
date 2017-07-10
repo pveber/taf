@@ -138,7 +138,8 @@ end
 
 module Task_zipper = struct
   type t = {
-    current_task : Task.t ; (* invariant: the real children of current_task are given by cursor *)
+    current_task : Task.t ; (* invariant: the real children of
+                               current_task are given by cursor *)
     cursor : Task.t List_zipper.t ;
     editing : bool ;
     parent : t option ;
@@ -232,8 +233,22 @@ module Task_tree_browser = struct
       zipper : Task_zipper.t ;
     }
 
+  let init db project = {
+    db ;
+    project ;
+    zipper = (
+      let root =
+        Task.make
+          ~descr:project.Project.name
+          ~steps:project.Project.milestones
+          ()
+      in
+      Task_zipper.of_task root
+    ) ;
+  }
+
   let rec update ({ zipper } as m) =
-    let return ?c z = return { m with zipper } in
+    let retz ?c zipper = return ?c { m with zipper } in
     function
     | `Keydown k ->
       if not zipper.Task_zipper.editing then
@@ -252,20 +267,20 @@ module Task_tree_browser = struct
         | `Enter -> update m `TTB_toggle_edit
         | _ -> return m
       )
-    | `TTB_enter -> return (Task_zipper.enter zipper)
-    | `TTB_leave -> return (Task_zipper.leave zipper)
-    | `TTB_next  -> return (Task_zipper.next  zipper)
-    | `TTB_prev  -> return (Task_zipper.prev  zipper)
+    | `TTB_enter -> retz (Task_zipper.enter zipper)
+    | `TTB_leave -> retz (Task_zipper.leave zipper)
+    | `TTB_next  -> retz (Task_zipper.next  zipper)
+    | `TTB_prev  -> retz (Task_zipper.prev  zipper)
     | `TTB_toggle_edit ->
       if zipper.Task_zipper.editing then
-        return (Task_zipper.stop_edit zipper true)
+        retz (Task_zipper.stop_edit zipper true)
       else
-        return ~c:[ Focus "task-edit" ] (Task_zipper.start_edit zipper)
+        retz ~c:[ Focus "task-edit" ] (Task_zipper.start_edit zipper)
     | `TTB_set_descr descr ->
-      return (Task_zipper.set_descr zipper descr)
+      retz (Task_zipper.set_descr zipper descr)
     | `Save ->
-      return ~c:[ Save (Task_zipper.contents zipper) ] zipper
-    | _ -> return zipper
+      return ~c:[ Save (Task_zipper.contents zipper) ] m
+    | _ -> return m
 
   let rec view_context z =
     let open Task_zipper in
@@ -325,7 +340,8 @@ module Project_list_browser = struct
   type model = {
     db : Db.t ;
     cursor : Project.t List_zipper.t ;
-    event : [ `Switch_to_new_project_form ] option ;
+    event : [ `Switch_to_new_project_form
+            | `Browse_project of Project.t ] option ;
   }
 
   let update m =
@@ -333,13 +349,18 @@ module Project_list_browser = struct
     | `Keydown `C -> return { m with event = Some `Switch_to_new_project_form }
     | `Keydown `Down -> return { m with cursor = List_zipper.next m.cursor }
     | `Keydown `Up  -> return { m with cursor = List_zipper.prev m.cursor }
+    | `Keydown `Enter -> (
+        match List_zipper.current m.cursor with
+        | None -> return m
+        | Some p -> return { m with event = Some (`Browse_project p) }
+      )
     | _ -> return m
 
   let view { cursor } =
     let line ?(highlight = false) txt =
       tr [ td [ strong_if highlight (text txt) ] ]
     in
-    let pline ?highlight p = line ?highlight p.Project.description in
+    let pline ?highlight p = line ?highlight p.Project.name in
     let f = function
       | `Prev x | `Next x -> Some (pline x)
       | `Cursor x -> Some (pline ~highlight:true x)
@@ -412,11 +433,16 @@ let rec update m ev =
     Task_tree_browser ttb, cmd
 
   | Project_list_browser plb ->
-    let plb, cmd = Project_list_browser.update plb ev in
-    let m = match plb.Project_list_browser.event with
+    let open Project_list_browser in
+    let plb, cmd = update plb ev in
+    let m = match plb.event with
       | None -> Project_list_browser plb
       | Some `Switch_to_new_project_form ->
-        New_project_form (New_project_form.init plb.Project_list_browser.db)
+        New_project_form (New_project_form.init plb.db)
+      | Some (`Browse_project p) ->
+        Task_tree_browser (
+          Task_tree_browser.init plb.db p
+        )
     in
     return m
   | New_project_form npf ->
@@ -436,7 +462,8 @@ let rec update m ev =
 
 let view = function
   | Task_tree_browser ttb ->
-    div (Task_tree_browser.view ttb @ [ Task_tree_browser.debug_task2 ttb.Task_tree_browser.zipper ])
+    div (  Task_tree_browser.view ttb
+         @ [ Task_tree_browser.debug_task2 ttb.Task_tree_browser.zipper ])
   | Project_list_browser plb ->
     Project_list_browser.view plb
   | New_project_form npf ->
