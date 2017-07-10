@@ -65,6 +65,7 @@ module Project = struct
     name : string ;
     description : string ;
     created : date ;
+    archived : bool ;
     milestones : Task.t list ;
   }
   [@@deriving sexp]
@@ -73,6 +74,7 @@ module Project = struct
     name ;
     description ;
     created = "" ;
+    archived = false ;
     milestones = [] ;
   }
 end
