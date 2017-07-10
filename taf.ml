@@ -10,6 +10,10 @@ let pre code = elt "pre" [ text code ]
 let tr = elt "tr"
 let td = elt "td"
 let table = elt "table"
+let h3 = elt "h3"
+let label = elt "label"
+let textarea = elt "textarea"
+let button = elt "button"
 
 let strong_if b x = if b then strong [ x ] else x
 
@@ -229,6 +233,7 @@ module Task_tree_browser = struct
           | `Down -> `TTB_next
           | `Enter -> `TTB_toggle_edit
           | `S -> `Save
+          | _ -> `No_op
         in
         update m msg
       else (
@@ -249,6 +254,7 @@ module Task_tree_browser = struct
       return (Task_zipper.set_descr zipper descr)
     | `Save ->
       return ~c:[ Save (Task_zipper.contents zipper) ] zipper
+    | _ -> return zipper
 
   let rec view_context z =
     let open Task_zipper in
@@ -308,9 +314,13 @@ module Project_list_browser = struct
   type model = {
     db : Db.t ;
     cursor : Project.t List_zipper.t ;
+    event : [ `Switch_to_new_project_form ] option ;
   }
 
-  let update m ev = m
+  let update m =
+    function
+    | `Keydown `C -> return { m with event = Some `Switch_to_new_project_form }
+    | _ -> return m
 
   let view { cursor } =
     let line ?(highlight = false) txt =
@@ -325,11 +335,62 @@ module Project_list_browser = struct
     in
     div [ table (List_zipper.positional_map cursor ~f) ]
 
+  let init db = {
+    db ;
+    cursor = List_zipper.make db.Db.projects ;
+    event = None ;
+  }
+end
+
+module New_project_form = struct
+  type model = {
+    db : Db.t ;
+    name : string ;
+    description : string ;
+    submitted : bool ;
+  }
+
+  let update model = function
+    | `NPF_set_name name -> return { model with name }
+    | `NPF_set_description description -> return { model with description }
+    | `NPF_submit -> return { model with submitted = true }
+    | _ -> return model
+
+  let view m = div [
+      h3 [ text "New project" ] ;
+      br () ; br () ;
+      label [
+        text "Name" ;
+        input ~a:[ str_prop "value" m.name ;
+                   str_prop "placeholder" "Enter a short name for your project" ;
+                   oninput (fun s -> `NPF_set_name s) ] [] ;
+      ] ;
+      br () ;
+      label [
+        text "Description" ;
+        textarea ~a:[ str_prop "value" m.description ;
+                      str_prop "placeholder" "Enter a description for your project" ;
+                      oninput (fun s -> `NPF_set_description s) ] [] ;
+      ] ;
+      br () ;
+      button
+        ~a:[ onclick `NPF_submit ; ]
+        [ text "Create project" ] ;
+    ]
+
+  let init db = {
+    db ;
+    name = "" ;
+    description = "" ;
+    submitted = false ;
+  }
+
 end
 
 type model =
   | Project_list_browser of Project_list_browser.model
   | Task_tree_browser of Task_tree_browser.model
+  | New_project_form of New_project_form.model
 
 let rec update m ev =
   match m with
@@ -337,17 +398,32 @@ let rec update m ev =
     let ttb, cmd = Task_tree_browser.update ttb ev in
     Task_tree_browser ttb, cmd
 
-  (* | New_project form -> ( *)
-  (*     match ev with *)
-  (*     |  *)
-  | Project_list_browser _ ->
+  | Project_list_browser plb ->
+    let plb, cmd = Project_list_browser.update plb ev in
+    let m = match plb.Project_list_browser.event with
+      | None -> Project_list_browser plb
+      | Some `Switch_to_new_project_form ->
+        New_project_form (New_project_form.init plb.Project_list_browser.db)
+    in
     return m
+  | New_project_form npf ->
+    let open New_project_form in
+    let npf, cmd = update npf ev in
+    let m =
+      if npf.submitted then
+        Project_list_browser Project_list_browser.(init npf.db)
+      else
+        New_project_form npf
+    in
+    m, cmd
 
 let view = function
   | Task_tree_browser ttb ->
     div (Task_tree_browser.view ttb @ [ Task_tree_browser.debug_task2 ttb.Task_tree_browser.zipper ])
   | Project_list_browser plb ->
     Project_list_browser.view plb
+  | New_project_form npf ->
+    New_project_form.view npf
 
 open Js_browser
 
@@ -384,6 +460,7 @@ let set_keydown_handler app =
     | 40 -> Vdom_blit.process app (`Keydown `Down)
     | 13 -> Vdom_blit.process app (`Keydown `Enter)
     | 83 -> Vdom_blit.process app (`Keydown `S)
+    | 67 -> Vdom_blit.process app (`Keydown `C)
     | _ -> ()
   in
   Window.add_event_listener window "keydown" keydown_handler false
@@ -403,10 +480,7 @@ let initialize_db () =
       |> Db.t_of_sexp
 
 let init db =
-  Project_list_browser {
-    Project_list_browser.db ;
-    cursor = List_zipper.make db.Db.projects
-  },
+  Project_list_browser (Project_list_browser.init db),
   Cmd.batch []
 
 let run () =
