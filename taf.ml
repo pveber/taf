@@ -17,7 +17,7 @@ let button = elt "button"
 
 let strong_if b x = if b then strong [ x ] else x
 
-type date = string
+type date = int (* number of milliseconds since epoch *)
 [@@deriving sexp]
 
 module Task = struct
@@ -73,7 +73,7 @@ module Project = struct
   let make ~name ~description () = {
     name ;
     description ;
-    created = "" ;
+    created = Js_browser.Date.now () ;
     archived = false ;
     milestones = [] ;
   }
@@ -382,17 +382,24 @@ module Project_list_browser = struct
     | _ -> return m
 
   let view { cursor } =
-    let line ?(highlight = false) txt =
-      tr [ td [ strong_if highlight (text txt) ] ]
+    let module Date = Js_browser.Date in
+    let line ?(highlight = false) { Project.name ; created } =
+      let created = Date.to_string (Date.new_date created) in
+      tr [
+        td [ strong_if highlight (text name) ] ;
+        td [ text created ] ;
+      ]
     in
-    let pline ?highlight p = line ?highlight p.Project.name in
     let f = function
-      | `Prev x | `Next x -> Some (pline x)
-      | `Cursor x -> Some (pline ~highlight:true x)
+      | `Prev x | `Next x -> Some (line x)
+      | `Cursor x -> Some (line ~highlight:true x)
       | `Cursor_at_end -> None
       | `End -> None
     in
-    div [ table (List_zipper.positional_map cursor ~f) ]
+    div [
+      h3 [ text "List of projects" ] ;
+      table (List_zipper.positional_map cursor ~f) ;
+    ]
 
   let init db = {
     db ;
