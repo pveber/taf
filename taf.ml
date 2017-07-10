@@ -384,7 +384,7 @@ module Project_list_browser = struct
   let view { cursor } =
     let module Date = Js_browser.Date in
     let line ?(highlight = false) { Project.name ; created } =
-      let created = Date.to_string (Date.new_date created) in
+      let created = Date.to_date_string (Date.new_date created) in
       tr [
         td [ strong_if highlight (text name) ] ;
         td [ text created ] ;
