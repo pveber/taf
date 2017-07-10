@@ -207,6 +207,10 @@ module Task_zipper = struct
     | None ->
       { z.current_task with Task.steps = List_zipper.contents z.cursor }
     | Some _ -> contents (leave z)
+
+  let is_at_root z = match z.parent with
+    | None -> true
+    | Some _ -> false
 end
 
 module Db = struct
@@ -218,6 +222,15 @@ module Db = struct
   let make () = { projects  = [] }
 
   let add_project db p = { projects = db.projects @ [ p ] }
+
+  let update_project db p =
+    let projects =
+      List.map db.projects ~f:(fun q ->
+          if String.(q.Project.name = p.Project.name)
+          then p else q
+        )
+    in
+    { projects }
 end
 
 (* Definition of the vdom application *)
@@ -229,8 +242,10 @@ type 'msg Vdom.Cmd.t +=
 module Task_tree_browser = struct
   type model = {
       db : Db.t ;
-      project : Project.t ;
+      project : Project.t ; (* invariant: the current milestones of project
+                               are represented by zipper *)
       zipper : Task_zipper.t ;
+      event : [`Leave of Db.t] option ;
     }
 
   let init db project = {
@@ -245,7 +260,13 @@ module Task_tree_browser = struct
       in
       Task_zipper.of_task root
     ) ;
+    event = None ;
   }
+
+  let update_db m =
+    let milestones = (Task_zipper.contents m.zipper).Task.steps in
+    let project = { m.project with Project.milestones } in
+    Db.update_project m.db project
 
   let rec update ({ zipper } as m) =
     let retz ?c zipper = return ?c { m with zipper } in
@@ -268,7 +289,11 @@ module Task_tree_browser = struct
         | _ -> return m
       )
     | `TTB_enter -> retz (Task_zipper.enter zipper)
-    | `TTB_leave -> retz (Task_zipper.leave zipper)
+    | `TTB_leave ->
+      if Task_zipper.is_at_root zipper then
+        return { m with event = Some (`Leave (update_db m))}
+      else
+        retz (Task_zipper.leave zipper)
     | `TTB_next  -> retz (Task_zipper.next  zipper)
     | `TTB_prev  -> retz (Task_zipper.prev  zipper)
     | `TTB_toggle_edit ->
@@ -426,11 +451,19 @@ type model =
   | Task_tree_browser of Task_tree_browser.model
   | New_project_form of New_project_form.model
 
-let rec update m ev =
+let update m ev =
   match m with
   | Task_tree_browser ttb ->
-    let ttb, cmd = Task_tree_browser.update ttb ev in
-    Task_tree_browser ttb, cmd
+    let open Task_tree_browser in
+    let ttb, cmd = update ttb ev in
+    let m = match ttb.event with
+      | None -> Task_tree_browser ttb
+      | Some (`Leave db) ->
+        Project_list_browser (
+          Project_list_browser.init db
+        )
+    in
+    m, cmd
 
   | Project_list_browser plb ->
     let open Project_list_browser in
@@ -444,7 +477,7 @@ let rec update m ev =
           Task_tree_browser.init plb.db p
         )
     in
-    return m
+    m, cmd
   | New_project_form npf ->
     let open New_project_form in
     let npf, cmd = update npf ev in
