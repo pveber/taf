@@ -47,7 +47,7 @@ module Task = struct
     id = "" ;
     due = None ;
     tags = [] ;
-    history = [] ;
+    history = [ Js_browser.Date.now (), Created ] ;
     descr ;
     note = "" ;
     steps ;
