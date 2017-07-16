@@ -125,6 +125,11 @@ module List_zipper = struct
 
   let is_at_end z = List.is_empty z.next
 
+  let is_at_last z =
+    match z.next with
+    | [ _ ] -> true
+    | _ -> false
+
   let positional_map z ~f =
     let l1 = List.rev_filter_map z.prev ~f:(fun x -> f (`Prev x)) in
     let l2 = match z.next with
@@ -372,7 +377,11 @@ module Project_list_browser = struct
   let update m =
     function
     | `Keydown `C -> return { m with event = Some `Switch_to_new_project_form }
-    | `Keydown `Down -> return { m with cursor = List_zipper.next m.cursor }
+    | `Keydown `Down ->
+      if List_zipper.is_at_last m.cursor then
+        return m
+      else
+        return { m with cursor = List_zipper.next m.cursor }
     | `Keydown `Up  -> return { m with cursor = List_zipper.prev m.cursor }
     | `Keydown `Enter -> (
         match List_zipper.current m.cursor with
