@@ -513,8 +513,7 @@ let update m ev =
 
 let view = function
   | Task_tree_browser ttb ->
-    div (  Task_tree_browser.view ttb
-         @ [ Task_tree_browser.debug_task2 ttb.Task_tree_browser.zipper ])
+    div (Task_tree_browser.view ttb)
   | Project_list_browser plb ->
     Project_list_browser.view plb
   | New_project_form npf ->
