@@ -1,6 +1,8 @@
 open Base
 open Vdom
 
+let local_storage_key = "taf-db"
+
 let ul = elt "ul"
 let li = elt "li"
 let input = elt "input"
@@ -17,7 +19,7 @@ let button = elt "button"
 
 let strong_if b x = if b then strong [ x ] else x
 
-type date = int (* number of milliseconds since epoch *)
+type date = float (* number of milliseconds since epoch *)
 [@@deriving sexp]
 
 module Task = struct
@@ -241,7 +243,7 @@ end
 (* Definition of the vdom application *)
 type 'msg Vdom.Cmd.t +=
   | Focus of string
-  | Save of Task.t
+  | Save of Db.t
 
 
 module Task_tree_browser = struct
@@ -268,7 +270,7 @@ module Task_tree_browser = struct
     event = None ;
   }
 
-  let update_db m =
+  let contents m =
     let milestones = (Task_zipper.contents m.zipper).Task.steps in
     let project = { m.project with Project.milestones } in
     Db.update_project m.db project
@@ -296,7 +298,7 @@ module Task_tree_browser = struct
     | `TTB_enter -> retz (Task_zipper.enter zipper)
     | `TTB_leave ->
       if Task_zipper.is_at_root zipper then
-        return { m with event = Some (`Leave (update_db m))}
+        return { m with event = Some (`Leave (contents m))}
       else
         retz (Task_zipper.leave zipper)
     | `TTB_next  -> retz (Task_zipper.next  zipper)
@@ -309,7 +311,7 @@ module Task_tree_browser = struct
     | `TTB_set_descr descr ->
       retz (Task_zipper.set_descr zipper descr)
     | `Save ->
-      return ~c:[ Save (Task_zipper.contents zipper) ] m
+      return ~c:[ Save (contents m) ] m
     | _ -> return m
 
   let rec view_context z =
@@ -533,10 +535,10 @@ let cmd_handler ctx = function
       | None -> Window.alert window "no local storage !"
       | Some storage ->
         let serialized =
-          Task.sexp_of_t u
+          Db.sexp_of_t u
           |> Sexp.to_string_hum
         in
-        Storage.set_item storage "task" serialized
+        Storage.set_item storage local_storage_key serialized
     ) ;
     true
   | _ -> false
@@ -565,7 +567,7 @@ let initialize_db () =
     Window.alert window msg ;
     failwith msg
   | Some storage ->
-    match Storage.get_item storage "db" with
+    match Storage.get_item storage local_storage_key with
     | None -> Db.make ()
     | Some serialized ->
       serialized
