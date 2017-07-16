@@ -383,7 +383,7 @@ module Project_list_browser = struct
       else
         return { m with cursor = List_zipper.next m.cursor }
     | `Keydown `Up  -> return { m with cursor = List_zipper.prev m.cursor }
-    | `Keydown `Enter -> (
+    | `Keydown `Right -> (
         match List_zipper.current m.cursor with
         | None -> return m
         | Some p -> return { m with event = Some (`Browse_project p) }
