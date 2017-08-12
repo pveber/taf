@@ -570,7 +570,7 @@ let initialize_db () =
     | None -> Db.make ()
     | Some serialized ->
       serialized
-      |> Sexplib.Sexp.of_string
+      |> Parsexp.Single.parse_string_exn
       |> Db.t_of_sexp
 
 let init db =
