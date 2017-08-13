@@ -578,6 +578,7 @@ let init db =
   Cmd.batch []
 
 let run () =
+  Gapi.load [`auth2 ; `client] (fun _ -> Window.alert window "biquette") ;
   let db = initialize_db () in
   let init = init db in
   let app = app ~init ~update ~view () in
