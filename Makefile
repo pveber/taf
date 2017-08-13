@@ -4,4 +4,4 @@ taf.js: taf.ml gapi.mli
 	js_of_ocaml +gen_js_api/ojs_runtime.js +base/runtime.js +weak.js -o $@ taf.byte
 
 clean:
-	rm -f taf.byte taf.cmi taf.cmo taf.js
+	rm -f taf.byte taf.cmi taf.cmo taf.js gapi.ml

@@ -56,8 +56,6 @@ end
     let t_to_js x = x
     let t_of_js x = x
     let then_final f x =
-      Js.Unsafe.meth_call x "then" [|Js.Unsafe.inject f ; Js.Unsafe.inject (fun () -> Js_browser.(Window.alert window "mkj"))|]
-    let then_final f x =
       Ojs.call x "then" [| Ojs.fun_to_js 1 (fun _ -> f ()) |]
       |> ignore
   end
@@ -93,4 +91,21 @@ module Client : sig
         init_arg ?apiKey ~discoveryDocs ~clientId ~scope ()
       |]
   ]
+end
+
+module SignStatus : sig
+  type t
+  val get : t -> bool
+  [@@js.call]
+end
+
+module GoogleAuth : sig
+  type t
+
+  val isSignedIn : t -> SignStatus.t
+end
+
+module Auth2 : sig
+  val getAuthInstance : unit -> GoogleAuth.t
+  [@@js.global "gapi.auth2.getAuthInstance"]
 end

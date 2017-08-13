@@ -1,6 +1,8 @@
 open Base
 open Vdom
 
+let ( @@ ) = Caml.( @@ )
+
 let local_storage_key = "taf-db"
 
 let ul = elt "ul"
@@ -579,13 +581,21 @@ let init db =
 
 let run () =
   Gapi.load [`auth2 ; `client] (`Callback (fun _ ->
-      Window.alert window "biquette" ;
       Gapi.Client.init
         ~discoveryDocs:["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"]
         ~clientId:"115408297756-j1rutmn22t80l551et8kpgjtm9pe1s53.apps.googleusercontent.com"
-        ~scope:"https://www.googleapis.com/auth/drive.metadata.readonly"
+        ~scope:"https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/drive.file"
         ()
-      |> Gapi.Promise0.then_final (fun () -> Window.alert window "biquette3")
+      |> Gapi.Promise0.then_final @@ fun () ->
+      let msg =
+        if
+          Gapi.Auth2.getAuthInstance ()
+          |> Gapi.GoogleAuth.isSignedIn
+          |> Gapi.SignStatus.get
+        then "signed in"
+        else "not signed in"
+      in
+      Window.alert window msg
     )) ;
   let db = initialize_db () in
   let init = init db in
