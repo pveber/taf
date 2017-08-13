@@ -47,6 +47,10 @@ module Promise : sig
   val t_to_js: ('a -> Ojs.t) -> 'a t -> Ojs.t
   val t_of_js: (Ojs.t -> 'a) -> Ojs.t -> 'a t
   val then_final : ('a -> unit) -> 'a t -> unit
+  val then_final2 :
+    ('a -> unit) ->
+    (Ojs.t -> unit) ->
+    'a t -> unit
 end
 [@@@js.start]
 
@@ -66,6 +70,8 @@ end
     let t_of_js f x = x
     let then_final f x =
       Js.Unsafe.meth_call x "then" [|Js.Unsafe.inject f|]
+    let then_final2 f g x =
+      Js.Unsafe.meth_call x "then" [|Js.Unsafe.inject f ; Js.Unsafe.inject g|]
   end
 ]
 

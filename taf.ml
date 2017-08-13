@@ -248,6 +248,47 @@ type 'msg Vdom.Cmd.t +=
   | Save of Db.t
 
 
+module Login_screen = struct
+  open Js_browser
+
+  type model = unit
+
+  let sign_in () =
+    Gapi.load [`auth2 ; `client] (`Callback (fun _ ->
+        Gapi.Client.init
+          ~discoveryDocs:["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"]
+          ~clientId:"115408297756-j1rutmn22t80l551et8kpgjtm9pe1s53.apps.googleusercontent.com"
+          ~scope:"https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/drive.file"
+          ()
+        |> Gapi.Promise0.then_final @@ fun () ->
+        let auth = Gapi.Auth2.getAuthInstance () in
+        if not Gapi.(SignStatus.get (GoogleAuth.isSignedIn auth)) then (
+          Console.log console (Ojs.string_to_js "Not signed in")
+        )
+        else (
+          Console.log console (Ojs.string_to_js "Signed in")
+        ) ;
+        let r = Gapi.GoogleAuth.signIn auth in
+        Ojs.(set global "mydebug" (Caml.Obj.magic r)) ;
+        r |> Gapi.Promise.then_final2
+          (fun user -> Ojs.(set global "mydebug2" (Caml.Obj.magic user)))
+          (fun error -> Window.alert window "rien" ; Console.log console error)
+      ))
+
+  let update m = function
+    | `Sign_in ->
+      sign_in () ;
+      return m
+    | _ -> return m
+
+  let view () =
+    div [
+      button
+        ~a:[ onclick `Sign_in ]
+        [ text "Sign In" ]
+    ]
+end
+
 module Task_tree_browser = struct
   type model = {
       db : Db.t ;
@@ -467,12 +508,18 @@ module New_project_form = struct
 end
 
 type model =
+  | Login_screen
   | Project_list_browser of Project_list_browser.model
   | Task_tree_browser of Task_tree_browser.model
   | New_project_form of New_project_form.model
 
 let update m ev =
   match m with
+  | Login_screen ->
+    let open Login_screen in
+    let ls, cmd = Login_screen.update m ev in
+    m, cmd
+
   | Task_tree_browser ttb ->
     let open Task_tree_browser in
     let ttb, cmd = update ttb ev in
@@ -514,6 +561,8 @@ let update m ev =
     m, cmd
 
 let view = function
+  | Login_screen ->
+    Login_screen.view ()
   | Task_tree_browser ttb ->
     div (Task_tree_browser.view ttb)
   | Project_list_browser plb ->
@@ -580,28 +629,7 @@ let init db =
   Cmd.batch []
 
 let run () =
-  Gapi.load [`auth2 ; `client] (`Callback (fun _ ->
-      Gapi.Client.init
-        ~discoveryDocs:["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"]
-        ~clientId:"115408297756-j1rutmn22t80l551et8kpgjtm9pe1s53.apps.googleusercontent.com"
-        ~scope:"https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/drive.file"
-        ()
-      |> Gapi.Promise0.then_final @@ fun () ->
-      let auth = Gapi.Auth2.getAuthInstance () in
-      if not Gapi.(SignStatus.get (GoogleAuth.isSignedIn auth)) then (
-        Console.log console (Ojs.string_to_js "Not signed in")
-      )
-      else (
-        Console.log console (Ojs.string_to_js "Signed in")
-      ) ;
-      let r = Gapi.GoogleAuth.signIn auth in
-      Ojs.(set global "mydebug" (Caml.Obj.magic r)) ;
-      r |> Gapi.Promise0.then_final (fun user ->
-          Ojs.(set global "mydebug2" (Caml.Obj.magic user))
-        )
-    )) ;
-  let db = initialize_db () in
-  let init = init db in
+  let init = Login_screen, Cmd.batch [] in
   let app = app ~init ~update ~view () in
   let app = Vdom_blit.run app in
   set_keydown_handler app ;
