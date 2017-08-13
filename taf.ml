@@ -588,11 +588,16 @@ let run () =
         ()
       |> Gapi.Promise0.then_final @@ fun () ->
       let auth = Gapi.Auth2.getAuthInstance () in
-      if not Gapi.(SignStatus.get (GoogleAuth.isSignedIn auth))
-      then Gapi.(
-          let r = GoogleAuth.signIn auth in
-          Ojs.(set global "mydebug" (Caml.Obj.magic r)) (* ;
-                                                      r |> Promise0.then_final (fun () -> Window.alert window "biquette") *)
+      if not Gapi.(SignStatus.get (GoogleAuth.isSignedIn auth)) then (
+        Console.log console (Ojs.string_to_js "Not signed in")
+      )
+      else (
+        Console.log console (Ojs.string_to_js "Signed in")
+      ) ;
+      let r = Gapi.GoogleAuth.signIn auth in
+      Ojs.(set global "mydebug" (Caml.Obj.magic r)) ;
+      r |> Gapi.Promise0.then_final (fun user ->
+          Ojs.(set global "mydebug2" (Caml.Obj.magic user))
         )
     )) ;
   let db = initialize_db () in

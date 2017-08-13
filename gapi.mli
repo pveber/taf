@@ -93,6 +93,10 @@ module Client : sig
   ]
 end
 
+module GoogleUser : sig
+  type t
+end
+
 module SignStatus : sig
   type t
   val get : t -> bool
@@ -104,7 +108,7 @@ module GoogleAuth : sig
 
   val isSignedIn : t -> SignStatus.t
 
-  val signIn : t -> Promise0.t
+  val signIn : t -> GoogleUser.t Promise.t
   [@@js.call]
 end
 
