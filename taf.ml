@@ -578,7 +578,15 @@ let init db =
   Cmd.batch []
 
 let run () =
-  Gapi.load [`auth2 ; `client] (`Callback (fun _ -> Window.alert window "biquette")) ;
+  Gapi.load [`auth2 ; `client] (`Callback (fun _ ->
+      Window.alert window "biquette" ;
+      Gapi.Client.init
+        ~discoveryDocs:["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"]
+        ~clientId:"115408297756-j1rutmn22t80l551et8kpgjtm9pe1s53.apps.googleusercontent.com"
+        ~scope:"https://www.googleapis.com/auth/drive.metadata.readonly"
+        ()
+      |> Gapi.Promise0.then_final (fun () -> Window.alert window "biquette3")
+    )) ;
   let db = initialize_db () in
   let init = init db in
   let app = app ~init ~update ~view () in
