@@ -242,6 +242,32 @@ module Db = struct
     { projects }
 end
 
+
+module Google_drive = struct
+
+  let discoveryDocs =
+    ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"]
+
+  let clientId =
+    "115408297756-j1rutmn22t80l551et8kpgjtm9pe1s53.apps.googleusercontent.com"
+
+  let scope =
+    "https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/drive.file"
+
+  let sign_in () =
+    Gapi.load [`auth2 ; `client] (`Callback (fun _ ->
+        Gapi.Client.init ~discoveryDocs ~clientId ~scope ()
+        |> Gapi.Promise0.then_final @@ fun () ->
+        let auth = Gapi.Auth2.getAuthInstance () in
+        let r = Gapi.GoogleAuth.signIn auth in
+        Ojs.(set global "mydebug" (Caml.Obj.magic r)) ;
+        r |> Gapi.Promise.then_final2
+          (fun user -> Ojs.(set global "mydebug2" (Caml.Obj.magic user)))
+          (fun error -> Js_browser.(Console.log console error))
+      ))
+
+end
+
 (* Definition of the vdom application *)
 type 'msg Vdom.Cmd.t +=
   | Focus of string
@@ -253,31 +279,9 @@ module Login_screen = struct
 
   type model = unit
 
-  let sign_in () =
-    Gapi.load [`auth2 ; `client] (`Callback (fun _ ->
-        Gapi.Client.init
-          ~discoveryDocs:["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"]
-          ~clientId:"115408297756-j1rutmn22t80l551et8kpgjtm9pe1s53.apps.googleusercontent.com"
-          ~scope:"https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/drive.file"
-          ()
-        |> Gapi.Promise0.then_final @@ fun () ->
-        let auth = Gapi.Auth2.getAuthInstance () in
-        if not Gapi.(SignStatus.get (GoogleAuth.isSignedIn auth)) then (
-          Console.log console (Ojs.string_to_js "Not signed in")
-        )
-        else (
-          Console.log console (Ojs.string_to_js "Signed in")
-        ) ;
-        let r = Gapi.GoogleAuth.signIn auth in
-        Ojs.(set global "mydebug" (Caml.Obj.magic r)) ;
-        r |> Gapi.Promise.then_final2
-          (fun user -> Ojs.(set global "mydebug2" (Caml.Obj.magic user)))
-          (fun error -> Window.alert window "rien" ; Console.log console error)
-      ))
-
   let update m = function
     | `Sign_in ->
-      sign_in () ;
+      Google_drive.sign_in () ;
       return m
     | _ -> return m
 
