@@ -103,6 +103,9 @@ module GoogleAuth : sig
   type t
 
   val isSignedIn : t -> SignStatus.t
+
+  val signIn : t -> Promise0.t
+  [@@js.call]
 end
 
 module Auth2 : sig

@@ -587,15 +587,13 @@ let run () =
         ~scope:"https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/drive.file"
         ()
       |> Gapi.Promise0.then_final @@ fun () ->
-      let msg =
-        if
-          Gapi.Auth2.getAuthInstance ()
-          |> Gapi.GoogleAuth.isSignedIn
-          |> Gapi.SignStatus.get
-        then "signed in"
-        else "not signed in"
-      in
-      Window.alert window msg
+      let auth = Gapi.Auth2.getAuthInstance () in
+      if not Gapi.(SignStatus.get (GoogleAuth.isSignedIn auth))
+      then Gapi.(
+          let r = GoogleAuth.signIn auth in
+          Ojs.(set global "mydebug" (Caml.Obj.magic r)) (* ;
+                                                      r |> Promise0.then_final (fun () -> Window.alert window "biquette") *)
+        )
     )) ;
   let db = initialize_db () in
   let init = init db in
