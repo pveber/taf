@@ -1,13 +1,23 @@
 type library = [`auth2 | `client] [@js.enum]
 
+type load_config = private Ojs.t
+
+val load_config :
+  callback:(unit -> unit) ->
+  onerror:(unit -> unit) ->
+  timeout:float ->
+  ontimeout:(unit -> unit) ->
+  load_config
+[@@js.builder]
+
 val load :
   library list ->
-  (unit -> unit) ->
+  [`Callback of (unit -> unit) | `Config of load_config] ->
   unit
 [@@js.custom
   val load_internal :
     string ->
-    (unit -> unit) ->
+    ([`Callback of (unit -> unit) | `Config of load_config] [@js.union]) ->
     unit
   [@@js.global "gapi.load"]
 
