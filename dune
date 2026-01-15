@@ -2,4 +2,5 @@
   (name taf)
   (public_name taf)
   (libraries notty notty.unix)
-  (flags (:standard -w -32-69-37)))
+  (flags (:standard -w -32-69-37))
+  (preprocess (pps ppx_deriving_yojson)))

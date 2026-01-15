@@ -1,4 +1,5 @@
 type status = Todo | Done
+[@@deriving yojson]
 
 type task = {
   text         : string;
@@ -7,6 +8,7 @@ type task = {
   completed_at : float option;
   children     : task list;
 }
+[@@deriving yojson]
 
 let now () = Unix.gettimeofday ()
 
@@ -122,7 +124,13 @@ module Zipper = struct
         | Todo -> { t with status = Done ; completed_at = Some (now ()) }
         | Done -> { t with status = Todo ; completed_at = None } in
       { z with items = List_zipper.replace_head z.items t }
-    
+
+  let at_root z = Option.is_none z.parent
+
+  let rec root z =
+    match z.parent with
+    | None -> { z.focus with children = List_zipper.to_list z.items }
+    | Some _ -> root (zoom_out z)
 end
 
 (* module Hist_zipper = struct *)
@@ -226,9 +234,31 @@ module State = struct
     I.vcat [breadcrumb; I.void 0 1; tasks; I.void 0 1; help]
 end
 
+let save_to_file filename (state : State.t) =
+  let json = task_to_yojson (Zipper.root state.zip) in
+  Out_channel.with_open_text filename (fun oc ->
+      Yojson.Safe.to_channel oc json
+    )
+
+let load_from_file filename =
+  In_channel.with_open_text filename (fun ic ->
+      Yojson.Safe.from_channel ic
+      |> task_of_yojson
+      |> Result.get_ok
+    )
+
+let load_or_create_task_tree filename =
+  let root_task =
+    if Sys.file_exists filename then
+      load_from_file filename
+    else mk_task "•"
+  in
+  Zipper.make root_task
+
 let main () =
-  let root_task = mk_task "•" in
-  let state = State.init (Zipper.make root_task) in
+  let json_path = "taf.json" in
+  let zip = load_or_create_task_tree json_path in
+  let state = State.init zip in
   let term = Notty_unix.Term.create () in
 
   let rec loop state =
@@ -239,7 +269,7 @@ let main () =
     | Edit _, `Key (`Enter, _) -> loop (State.leave_edit_mode state)
     | Edit _, `Key (`Backspace, _) -> loop (State.remove_char state)
     | Edit _, `Key (`ASCII c, []) -> loop (State.add_char state c)
-    | Command, `Key (`ASCII 'q', []) -> ()
+    | Command, `Key (`ASCII 'q', []) -> state
     | Command, `Key (`ASCII 'i', []) -> loop (State.insert_empty_task state)
     | Command, `Key (`ASCII 'd', []) -> loop (State.toggle_done state)
     | Command, `Key (`Arrow `Down, []) -> loop (State.next state)
@@ -248,7 +278,7 @@ let main () =
     | Command, `Key (`Arrow `Right, []) -> loop (State.zoom_in state)
     | _ -> loop state
   in
-  loop state
-
+  let final_state = loop state in
+  save_to_file json_path final_state
 
 let () = main ()
