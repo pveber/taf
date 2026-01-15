@@ -1,590 +1,254 @@
-open Base
-open Vdom
+type status = Todo | Done
 
-let local_storage_key = "taf-db"
+type task = {
+  text         : string;
+  status       : status;
+  created_at   : float;
+  completed_at : float option;
+  children     : task list;
+}
 
-let ul = elt "ul"
-let li = elt "li"
-let input = elt "input"
-let strong = elt "strong"
-let br () = elt "br" []
-let pre code = elt "pre" [ text code ]
-let tr = elt "tr"
-let td = elt "td"
-let table = elt "table"
-let h3 = elt "h3"
-let label = elt "label"
-let textarea = elt "textarea"
-let button = elt "button"
+let now () = Unix.gettimeofday ()
 
-let strong_if b x = if b then strong [ x ] else x
-
-type date = float (* number of milliseconds since epoch *)
-[@@deriving sexp]
-
-module Task = struct
-  type t = {
-    id : id ;
-    descr : string ;
-    note : string ;
-    status : status ;
-    due : date option ;
-    tags : string list ;
-    steps : t list ;
-    estimated_duration : float option ; (* in hours *)
-    duration : float option ;
-    deps : id list ;
-    history : (date * event) list ;
-  }
-  and id = string
-  and event =
-    | Created
-    | Started
-    | Canceled
-    | Done
-  and status = TODO | DONE | CANCELED
-  [@@deriving sexp]
-
-  let make ?(descr = "") ?(steps = []) () = {
-    id = "" ;
-    due = None ;
-    tags = [] ;
-    history = [ Js_browser.Date.now (), Created ] ;
-    descr ;
-    note = "" ;
-    steps ;
-    deps = [] ;
-    estimated_duration = None ;
-    duration = None ;
-    status = TODO ;
-  }
-
-
-end
-
-module Project = struct
-  type t = {
-    name : string ;
-    description : string ;
-    created : date ;
-    archived : bool ;
-    milestones : Task.t list ;
-  }
-  [@@deriving sexp]
-
-  let make ~name ~description () = {
-    name ;
-    description ;
-    created = Js_browser.Date.now () ;
-    archived = false ;
-    milestones = [] ;
-  }
-end
+let mk_task text = {
+  text ;
+  status = Todo;
+  created_at = now ();
+  completed_at = None;
+  children = [];
+}
 
 module List_zipper = struct
-  type 'a t = {
-    prev : 'a list ;
-    next : 'a list ;
-  }
-  [@@deriving sexp]
+  type 'a t = 'a list * 'a list
 
-  let make xs = {
-    prev = [] ;
-    next = xs ;
-  }
+  let make xs = ([], xs)
 
-  let singleton x = make [ x ]
+  let singleton x = ([], [ x ])
 
-  let current xs = match xs.next with
-    | [] -> None
-    | h :: _ -> Some h
+  let next = function
+    | (_, []) as lz -> lz
+    | (ls, h :: t) -> (h :: ls, t)
 
-  let set_current xs x = {
-    xs with next = x :: (
-      match xs.next with
-      | [] -> []
-      | _ :: t -> t
-    )
-  }
+  let prev = function
+    | ([], _) as lz -> lz
+    | (h :: t, rs) -> (t, h :: rs)
 
-  let next z =
-    match z.next with
-    | [] -> z
+  let head = function
+    | (_, []) -> None
+    | (_, h :: _) -> Some h
+
+  let replace_head (ls, rs) x = match rs with
+    | [] -> (ls, [ x ])
+    | _ :: t -> (ls, x :: t)
+
+  let insert (ls, rs) x =
+    match rs with
+    | [] -> (ls, x :: [])
+    | h :: t -> (h :: ls, x :: t)
+
+  let fold (lr, rs) ~init ~f =
+    let acc = List.fold_right (fun x acc -> f ~head:false acc x) lr init in
+    match rs with
+    | [] -> acc
     | h :: t ->
-      { prev = h :: z.prev ;
-        next = t }
+      let acc' = f ~head:true acc h in
+      List.fold_left (fun acc x -> f ~head:false acc x) acc' t
 
-  let prev z =
-    match z.prev with
-    | [] -> z
-    | h :: t ->
-      { prev = t ;
-        next = h :: z.next ; }
-
-  let contents z = List.rev z.prev @ z.next
-
-  let is_empty z = List.is_empty z.prev && List.is_empty z.next
-
-  let is_at_end z = List.is_empty z.next
-
-  let is_at_last z =
-    match z.next with
-    | [ _ ] -> true
-    | _ -> false
-
-  let positional_map z ~f =
-    let l1 = List.rev_filter_map z.prev ~f:(fun x -> f (`Prev x)) in
-    let l2 = match z.next with
-      | [] -> List.filter_opt [f `Cursor_at_end]
+  let fold_right (lr, rs) ~init ~f =
+    let acc = match rs with
+      | [] -> init
       | h :: t ->
-        f (`Cursor h) :: List.map t ~f:(fun x -> f (`Next x)) @ [ f `End ]
-        |> List.filter_opt
+        let acc' = List.fold_right (fun x acc -> f ~head:false acc x) t init in
+        f ~head:true acc' h
     in
-    l1 @ l2
+    List.fold_left (f ~head:false) acc lr
+  
+  let to_list (ls, rs) = List.rev_append ls rs
 end
 
-module Task_zipper = struct
+module Zipper = struct
   type t = {
-    current_task : Task.t ; (* invariant: the real children of
-                               current_task are given by cursor *)
-    cursor : Task.t List_zipper.t ;
-    editing : bool ;
+    focus  : task ;
+    items  : task List_zipper.t ;
     parent : t option ;
   }
-  [@@deriving sexp]
 
-  let of_task t =
-    {
-      current_task = t ;
-      cursor = List_zipper.make t.Task.steps ;
-      editing = false ;
-      parent = None ;
-    }
+  let make t = {
+    focus = t ;
+    items = List_zipper.make t.children ;
+    parent = None ;
+  }
 
-  let next z =
-    { z with editing = false ;
-             cursor = List_zipper.next z.cursor }
+  let prev z = { z with items = List_zipper.prev z.items }
+  let next z = { z with items = List_zipper.next z.items }
 
-  let prev z =
-    { z with editing = false ;
-             cursor = List_zipper.prev z.cursor }
+  let zoom_in z = match List_zipper.head z.items with
+    | None -> z
+    | Some t -> {
+        focus = t ;
+        items = List_zipper.make t.children ;
+        parent = Some z ;
+      }
 
-  let cursor z = List_zipper.current z.cursor
+  let zoom_out z = match z.parent with
+    | None -> z
+    | Some parent ->
+      let t = { z.focus with children = List_zipper.to_list z.items } in
+      { parent with items = List_zipper.replace_head parent.items t }
 
-  let set_cursor z u =
-    { z with cursor = List_zipper.set_current z.cursor u }
+  let current_path z =
+    let rec loop z acc =
+      let acc' = z.focus :: acc in
+      match z.parent with
+      | None -> acc'
+      | Some p -> loop p acc'
+    in
+    loop z []
 
-  let enter z =
-    match cursor z with
+  let insert_task z t =
+    { z with items = List_zipper.insert z.items t }
+
+  let set_cursor_text z text =
+    match List_zipper.head z.items with
+    | None -> z
+    | Some t -> { z with items = List_zipper.replace_head z.items { t with text } }
+
+  let toggle_done z =
+    match List_zipper.head z.items with
     | None -> z
     | Some t ->
-      let res = of_task t in
-      { res with parent = Some z }
-
-  let leave z =
-    match z.parent with
-    | None -> z
-    | Some p ->
-      let z_u = { z.current_task with Task.steps = List_zipper.contents z.cursor } in
-      { p with editing = false ;
-               cursor = List_zipper.set_current p.cursor z_u }
-
-  let start_edit z =
-    { z with editing = true ;
-             cursor = (
-               if List_zipper.is_at_end z.cursor then
-                 List_zipper.set_current z.cursor (Task.make ())
-               else
-                 z.cursor
-             ) ; }
-
-  let stop_edit z eol =
-    let r = { z with editing = false } in
-    if eol then next r else r
-
-  let set_descr z descr =
-    let u = match cursor z with
-      | None -> Task.make ~descr ()
-      | Some u -> { u with Task.descr }
-    in
-    set_cursor z u
-
-  let rec contents z =
-    match z.parent with
-    | None ->
-      { z.current_task with Task.steps = List_zipper.contents z.cursor }
-    | Some _ -> contents (leave z)
-
-  let is_at_root z = match z.parent with
-    | None -> true
-    | Some _ -> false
+      let t =
+        match t.status with
+        | Todo -> { t with status = Done ; completed_at = Some (now ()) }
+        | Done -> { t with status = Todo ; completed_at = None } in
+      { z with items = List_zipper.replace_head z.items t }
+    
 end
 
-module Db = struct
+(* module Hist_zipper = struct *)
+(*   (\* invariant: List_zipper not empty *\) *)
+(*   type t = Zipper.t List_zipper.t *)
+
+(*   let make z = List_zipper.singleton z   *)
+(* end *)
+
+module State = struct
+  open Notty
+
+  type mode =
+    | Command
+    | Edit of string
+
   type t = {
-    projects : Project.t list ;
+    zip : Zipper.t ;
+    mode : mode ;
   }
-  [@@deriving sexp]
 
-  let make () = { projects  = [] }
+  let init zip = { zip ; mode = Command }
 
-  let add_project db p = { projects = db.projects @ [ p ] }
-
-  let update_project db p =
-    let projects =
-      List.map db.projects ~f:(fun q ->
-          if String.(q.Project.name = p.Project.name)
-          then p else q
-        )
-    in
-    { projects }
-end
-
-(* Definition of the vdom application *)
-type 'msg Vdom.Cmd.t +=
-  | Focus of string
-  | Save of Db.t
-
-
-module Task_tree_browser = struct
-  type model = {
-      db : Db.t ;
-      project : Project.t ; (* invariant: the current milestones of project
-                               are represented by zipper *)
-      zipper : Task_zipper.t ;
-      event : [`Leave of Db.t] option ;
+  let insert_empty_task { zip ; _ } =
+    let t = mk_task "" in
+    {
+      zip = Zipper.insert_task zip t ;
+      mode = Edit "" ;
     }
 
-  let init db project = {
-    db ;
-    project ;
-    zipper = (
-      let root =
-        Task.make
-          ~descr:project.Project.name
-          ~steps:project.Project.milestones
-          ()
-      in
-      Task_zipper.of_task root
-    ) ;
-    event = None ;
-  }
+  let toggle_done state = { state with zip = Zipper.toggle_done state.zip }
+  
+  let leave_edit_mode state =
+    match state.mode with
+    | Command -> state
+    | Edit s ->
+      { zip = Zipper.set_cursor_text state.zip s ;
+        mode = Command }
 
-  let contents m =
-    let milestones = (Task_zipper.contents m.zipper).Task.steps in
-    let project = { m.project with Project.milestones } in
-    Db.update_project m.db project
+  let add_char state c =
+    match state.mode with
+    | Command -> state
+    | Edit s -> { state with mode = Edit (Printf.sprintf "%s%c" s c) }
 
-  let rec update ({ zipper } as m) =
-    let retz ?c zipper = return ?c { m with zipper } in
-    function
-    | `Keydown k ->
-      if not zipper.Task_zipper.editing then
-        let msg = match k with
-          | `Left -> `TTB_leave
-          | `Right -> `TTB_enter
-          | `Up -> `TTB_prev
-          | `Down -> `TTB_next
-          | `Enter -> `TTB_toggle_edit
-          | `S -> `Save
-          | _ -> `No_op
-        in
-        update m msg
-      else (
-        match k with
-        | `Enter -> update m `TTB_toggle_edit
-        | _ -> return m
-      )
-    | `TTB_enter -> retz (Task_zipper.enter zipper)
-    | `TTB_leave ->
-      if Task_zipper.is_at_root zipper then
-        return { m with event = Some (`Leave (contents m))}
-      else
-        retz (Task_zipper.leave zipper)
-    | `TTB_next  -> retz (Task_zipper.next  zipper)
-    | `TTB_prev  -> retz (Task_zipper.prev  zipper)
-    | `TTB_toggle_edit ->
-      if zipper.Task_zipper.editing then
-        retz (Task_zipper.stop_edit zipper true)
-      else
-        retz ~c:[ Focus "task-edit" ] (Task_zipper.start_edit zipper)
-    | `TTB_set_descr descr ->
-      retz (Task_zipper.set_descr zipper descr)
-    | `Save ->
-      return ~c:[ Save (contents m) ] m
-    | _ -> return m
+  let remove_char state =
+    match state.mode with
+    | Command -> state
+    | Edit s -> { state with mode = Edit (String.(sub s 0 (max 0 (length s - 1)))) }
+  
+  let next state = { state with zip = Zipper.next state.zip }
+  let prev state = { state with zip = Zipper.prev state.zip }
 
-  let rec view_context z =
-    let open Task_zipper in
-    match z.parent with
-    | None -> [ text z.current_task.Task.descr ]
-    | Some z' ->
-      view_context z' @ [ text " > " ; text z.current_task.Task.descr ]
+  let zoom_in state = { state with zip = Zipper.zoom_in state.zip }
+  let zoom_out state = { state with zip = Zipper.zoom_out state.zip }
 
-  let view_current_level z =
-    let open Task_zipper in
-    let line ?(highlight = false) txt =
-      li [ strong_if highlight (text txt) ]
+  let render_breadcrumb { zip ; _ } =
+    let path_elts = List.map (fun t -> t.text) (Zipper.current_path zip) in
+    let breadcrumb = String.concat " > " path_elts in
+    I.string A.(fg lightblue) breadcrumb
+    
+  let render_task ~has_focus ~mode task =
+    let checkbox = match task.status with
+      | Todo -> "[ ]"
+      | Done -> "[X]"
     in
-    let task_line ?highlight u = line ?highlight u.Task.descr in
-    let f = function
-      | `Prev x | `Next x -> task_line x
-      | `Cursor x -> (
-          if z.editing then (
-            let input =
-              input ~a:[
-                str_prop "id" "task-edit" ;
-                str_prop "value" x.Task.descr ;
-                str_prop "placeholder" (
-                  if String.(x.Task.descr = "") then
-                    "Enter a task description"
-                  else ""
-                ) ;
-                oninput (fun s -> `TTB_set_descr s)
-              ] []
-            in
-            li [ input ]
-          )
-          else task_line ~highlight:true x
+    let text = match task.text, mode with
+      | "", Command -> "(empty)"
+      | s,  Command -> s
+      | s,  Edit field ->
+        if has_focus then field else s
+    in
+    let line = checkbox ^ " " ^ text in
+    let attr =
+      if has_focus then
+        match mode with
+        | Edit _ -> A.(bg green ++ fg black)
+        | Command -> A.(bg blue ++ fg white)
+      else A.empty
+    in
+    I.string attr line
+
+  let render_tasks state =
+    let task_images =
+      List_zipper.fold_right state.zip.items ~init:[] ~f:(fun ~head acc t ->
+          render_task ~has_focus:head ~mode:state.mode t :: acc
         )
-      | `Cursor_at_end -> line ~highlight:true "+"
-      | `End -> line "+"
     in
-    [ ul (List_zipper.positional_map z.cursor ~f:(fun x -> Some (f x))) ]
+    match task_images with
+    | [] -> I.string A.(fg (gray 8)) "(no tasks - press 'i' to insert)"
+    | imgs -> I.vcat imgs
 
-  let debug_task z =
-    Task_zipper.sexp_of_t z
-    |> Sexp.to_string_hum
-    |> pre
-
-  let debug_task2 z =
-    Task_zipper.contents z
-    |> Task.sexp_of_t
-    |> Sexp.to_string_hum
-    |> pre
-
-  let view ttb =
-    view_context ttb.zipper @ br () :: view_current_level ttb.zipper
-
+  let render_help () =
+    I.string
+      A.(fg (gray 12)) 
+      "i:insert d:delete Enter:edit Space:toggle ←→:zoom ↑↓:move u:undo q:quit"
+  
+  let render state =
+    let breadcrumb = render_breadcrumb state in
+    let tasks = render_tasks state in
+    let help = render_help () in
+    I.vcat [breadcrumb; I.void 0 1; tasks; I.void 0 1; help]
 end
 
-module Project_list_browser = struct
-  type model = {
-    db : Db.t ;
-    cursor : Project.t List_zipper.t ;
-    event : [ `Switch_to_new_project_form
-            | `Browse_project of Project.t ] option ;
-  }
+let main () =
+  let root_task = mk_task "•" in
+  let state = State.init (Zipper.make root_task) in
+  let term = Notty_unix.Term.create () in
 
-  let update m =
-    function
-    | `Keydown `C -> return { m with event = Some `Switch_to_new_project_form }
-    | `Keydown `Down ->
-      if List_zipper.is_at_last m.cursor then
-        return m
-      else
-        return { m with cursor = List_zipper.next m.cursor }
-    | `Keydown `Up  -> return { m with cursor = List_zipper.prev m.cursor }
-    | `Keydown `Right -> (
-        match List_zipper.current m.cursor with
-        | None -> return m
-        | Some p -> return { m with event = Some (`Browse_project p) }
-      )
-    | _ -> return m
+  let rec loop state =
+    let img = State.render state in
+    Notty_unix.Term.image term img ;
 
-  let view { cursor } =
-    let module Date = Js_browser.Date in
-    let line ?(highlight = false) { Project.name ; created } =
-      let created = Date.to_date_string (Date.new_date created) in
-      tr [
-        td [ strong_if highlight (text name) ] ;
-        td [ text created ] ;
-      ]
-    in
-    let f = function
-      | `Prev x | `Next x -> Some (line x)
-      | `Cursor x -> Some (line ~highlight:true x)
-      | `Cursor_at_end -> None
-      | `End -> None
-    in
-    div [
-      h3 [ text "List of projects" ] ;
-      table (List_zipper.positional_map cursor ~f) ;
-    ]
-
-  let init db = {
-    db ;
-    cursor = List_zipper.make db.Db.projects ;
-    event = None ;
-  }
-end
-
-module New_project_form = struct
-  type model = {
-    db : Db.t ;
-    name : string ;
-    description : string ;
-    submitted : bool ;
-  }
-
-  let update model = function
-    | `NPF_set_name name -> return { model with name }
-    | `NPF_set_description description -> return { model with description }
-    | `NPF_submit -> return { model with submitted = true }
-    | _ -> return model
-
-  let view m = div [
-      h3 [ text "New project" ] ;
-      br () ; br () ;
-      label [
-        text "Name" ;
-        input ~a:[ str_prop "value" m.name ;
-                   str_prop "placeholder" "Enter a short name for your project" ;
-                   oninput (fun s -> `NPF_set_name s) ] [] ;
-      ] ;
-      br () ;
-      label [
-        text "Description" ;
-        textarea ~a:[ str_prop "value" m.description ;
-                      str_prop "placeholder" "Enter a description for your project" ;
-                      oninput (fun s -> `NPF_set_description s) ] [] ;
-      ] ;
-      br () ;
-      button
-        ~a:[ onclick `NPF_submit ; ]
-        [ text "Create project" ] ;
-    ]
-
-  let init db = {
-    db ;
-    name = "" ;
-    description = "" ;
-    submitted = false ;
-  }
-
-end
-
-type model =
-  | Project_list_browser of Project_list_browser.model
-  | Task_tree_browser of Task_tree_browser.model
-  | New_project_form of New_project_form.model
-
-let update m ev =
-  match m with
-  | Task_tree_browser ttb ->
-    let open Task_tree_browser in
-    let ttb, cmd = update ttb ev in
-    let m = match ttb.event with
-      | None -> Task_tree_browser ttb
-      | Some (`Leave db) ->
-        Project_list_browser (
-          Project_list_browser.init db
-        )
-    in
-    m, cmd
-
-  | Project_list_browser plb ->
-    let open Project_list_browser in
-    let plb, cmd = update plb ev in
-    let m = match plb.event with
-      | None -> Project_list_browser plb
-      | Some `Switch_to_new_project_form ->
-        New_project_form (New_project_form.init plb.db)
-      | Some (`Browse_project p) ->
-        Task_tree_browser (
-          Task_tree_browser.init plb.db p
-        )
-    in
-    m, cmd
-  | New_project_form npf ->
-    let open New_project_form in
-    let npf, cmd = update npf ev in
-    let m =
-      if npf.submitted then
-        Project_list_browser (
-          Project.make ~name:npf.name ~description:npf.description ()
-          |> Db.add_project npf.db
-          |> Project_list_browser.init
-        )
-      else
-        New_project_form npf
-    in
-    m, cmd
-
-let view = function
-  | Task_tree_browser ttb ->
-    div (Task_tree_browser.view ttb)
-  | Project_list_browser plb ->
-    Project_list_browser.view plb
-  | New_project_form npf ->
-    New_project_form.view npf
-
-open Js_browser
-
-let cmd_handler ctx = function
-  | Focus id ->
-    (
-      match Document.get_element_by_id document id with
-      | None -> ()
-      | Some e -> Element.focus e
-    ) ;
-    true
-  | Save u -> (
-      match Window.local_storage window with
-      | None -> Window.alert window "no local storage !"
-      | Some storage ->
-        let serialized =
-          Db.sexp_of_t u
-          |> Sexp.to_string_hum
-        in
-        Storage.set_item storage local_storage_key serialized
-    ) ;
-    true
-  | _ -> false
-
-let () = Vdom_blit.(register (cmd {Cmd.f = cmd_handler}))
-
-
-let set_keydown_handler app =
-  let keydown_handler ev =
-    match Event.which ev with
-    | 39 -> Vdom_blit.process app (`Keydown `Right)
-    | 37 -> Vdom_blit.process app (`Keydown `Left)
-    | 38 -> Vdom_blit.process app (`Keydown `Up)
-    | 40 -> Vdom_blit.process app (`Keydown `Down)
-    | 13 -> Vdom_blit.process app (`Keydown `Enter)
-    | 83 -> Vdom_blit.process app (`Keydown `S)
-    | 67 -> Vdom_blit.process app (`Keydown `C)
-    | _ -> ()
+    match state.mode, Notty_unix.Term.event term with
+    | Edit _, `Key (`Enter, _) -> loop (State.leave_edit_mode state)
+    | Edit _, `Key (`Backspace, _) -> loop (State.remove_char state)
+    | Edit _, `Key (`ASCII c, []) -> loop (State.add_char state c)
+    | Command, `Key (`ASCII 'q', []) -> ()
+    | Command, `Key (`ASCII 'i', []) -> loop (State.insert_empty_task state)
+    | Command, `Key (`ASCII 'd', []) -> loop (State.toggle_done state)
+    | Command, `Key (`Arrow `Down, []) -> loop (State.next state)
+    | Command, `Key (`Arrow `Up, []) -> loop (State.prev state)
+    | Command, `Key (`Arrow `Left, []) -> loop (State.zoom_out state)
+    | Command, `Key (`Arrow `Right, []) -> loop (State.zoom_in state)
+    | _ -> loop state
   in
-  Window.add_event_listener window "keydown" keydown_handler false
+  loop state
 
-let initialize_db () =
-  match Window.local_storage window with
-  | None ->
-    let msg = "No local storage, stopping program" in
-    Window.alert window msg ;
-    failwith msg
-  | Some storage ->
-    match Storage.get_item storage local_storage_key with
-    | None -> Db.make ()
-    | Some serialized ->
-      serialized
-      |> Parsexp.Single.parse_string_exn
-      |> Db.t_of_sexp
 
-let init db =
-  Project_list_browser (Project_list_browser.init db),
-  Cmd.batch []
-
-let run () =
-  let db = initialize_db () in
-  let init = init db in
-  let app = app ~init ~update ~view () in
-  let app = Vdom_blit.run app in
-  set_keydown_handler app ;
-  app
-  |> Vdom_blit.dom
-  |> Element.append_child (Document.body document)
-
-let () = Window.set_onload window run
+let () = main ()

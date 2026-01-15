@@ -1,0 +1,5 @@
+(executable
+  (name taf)
+  (public_name taf)
+  (libraries notty notty.unix)
+  (flags (:standard -w -32-69-37)))

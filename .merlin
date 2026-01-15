@@ -1,6 +1,0 @@
-PKG base
-PKG js_of_ocaml
-PKG js_of_ocaml.ppx
-PKG ocaml-vdom
-PKG parsexp
-PKG ppx_sexp_conv
