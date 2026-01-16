@@ -1,6 +1,6 @@
 (executable
   (name taf)
   (public_name taf)
-  (libraries notty notty.unix)
+  (libraries notty notty.unix xdg)
   (flags (:standard -w -32-69-37))
   (preprocess (pps ppx_deriving_yojson)))
