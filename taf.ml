@@ -20,6 +20,20 @@ let mk_task text = {
   children = [];
 }
 
+let is_continuation_byte c =
+  Char.code c land 0b1100_0000 = 0b1000_0000
+
+let remove_last_utf8 = function
+  | "" -> ""
+  | s ->
+    let rec loop i =
+      if i < 0 then ""
+      else if is_continuation_byte s.[i]
+      then loop (i - 1) (* continuation byte *)
+      else String.sub s 0 i
+    in
+    loop (String.length s - 1)
+
 module List_zipper = struct
   type 'a t = 'a list * 'a list
 
@@ -121,6 +135,10 @@ module Zipper = struct
     | None -> z
     | Some t -> { z with items = List_zipper.replace_head z.items { t with text } }
 
+  let is_cursor_on_task z = Option.is_some (List_zipper.head z.items)
+
+  let cursor z = List_zipper.head z.items
+
   let toggle_done z =
     match List_zipper.head z.items with
     | None -> z
@@ -177,6 +195,14 @@ module State = struct
       { zip = Zipper.set_cursor_text state.zip s ;
         mode = Command }
 
+  let enter_edit_mode state =
+    match state.mode with
+    | Edit _ -> state
+    | Command ->
+      match Zipper.cursor state.zip with
+      | None -> state
+      | Some t -> { state with mode = Edit t.text }
+
   let add_char state c =
     match state.mode with
     | Command -> state
@@ -196,7 +222,7 @@ module State = struct
   let remove_char state =
     match state.mode with
     | Command -> state
-    | Edit s -> { state with mode = Edit (String.(sub s 0 (max 0 (length s - 1)))) }
+    | Edit s -> { state with mode = Edit (remove_last_utf8 s) }
   
   let update_zip f state = { state with zip = f state.zip }
 
@@ -292,6 +318,7 @@ let main () =
     | Command, `Key (`Arrow `Left, []) -> k_update_zip Zipper.zoom_out
     | Command, `Key (`Arrow `Right, []) -> k_update_zip Zipper.zoom_in
     | Command, `Key (`Delete, []) -> k_update_zip Zipper.suppr_current
+    | Command, `Key (`Enter, []) -> loop (State.enter_edit_mode state)
     | _ -> loop state
   in
   let final_state = loop state in
