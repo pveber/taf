@@ -88,7 +88,7 @@ module List_zipper = struct
   let to_list (ls, rs) = List.rev_append ls rs
 end
 
-module Zipper = struct
+module Task_zipper = struct
   type t = {
     focus  : task ;
     items  : task List_zipper.t ;
@@ -175,7 +175,7 @@ module State = struct
     | Edit of string
 
   type t = {
-    zip : Zipper.t ;
+    zip : Task_zipper.t ;
     mode : mode ;
   }
 
@@ -184,7 +184,7 @@ module State = struct
   let insert_empty_task { zip ; _ } =
     let t = mk_task "" in
     {
-      zip = Zipper.insert_task zip t ;
+      zip = Task_zipper.insert_task zip t ;
       mode = Edit "" ;
     }
 
@@ -192,14 +192,14 @@ module State = struct
     match state.mode with
     | Command -> state
     | Edit s ->
-      { zip = Zipper.set_cursor_text state.zip s ;
+      { zip = Task_zipper.set_cursor_text state.zip s ;
         mode = Command }
 
   let enter_edit_mode state =
     match state.mode with
     | Edit _ -> state
     | Command ->
-      match Zipper.cursor state.zip with
+      match Task_zipper.cursor state.zip with
       | None -> state
       | Some t -> { state with mode = Edit t.text }
 
@@ -227,7 +227,7 @@ module State = struct
   let update_zip f state = { state with zip = f state.zip }
 
   let render_breadcrumb { zip ; _ } =
-    let path_elts = List.map (fun t -> t.text) (Zipper.current_path zip) in
+    let path_elts = List.map (fun t -> t.text) (Task_zipper.current_path zip) in
     let breadcrumb = String.concat " > " path_elts in
     I.string A.(fg lightblue) breadcrumb
     
@@ -327,11 +327,11 @@ let load_task_tree dirs =
       load_from_file filename
     else mk_task "•"
   in
-  Zipper.make root_task
+  Task_zipper.make root_task
 
 let save_task_tree zip dirs =
   let filename = Dirs.data_path dirs in
-  let json = task_to_yojson (Zipper.root zip) in
+  let json = task_to_yojson (Task_zipper.root zip) in
   Out_channel.with_open_text filename (fun oc ->
       Yojson.Safe.to_channel oc json
     )
@@ -353,12 +353,12 @@ let main () =
     | Edit _, `Key ((`ASCII _ | `Uchar _) as c, []) -> loop (State.add_char state c)
     | Command, `Key (`ASCII 'q', []) -> state
     | Command, `Key (`ASCII 'i', []) -> loop (State.insert_empty_task state)
-    | Command, `Key (`ASCII 'd', []) -> k_update_zip Zipper.toggle_done
-    | Command, `Key (`Arrow `Down, []) -> k_update_zip Zipper.next
-    | Command, `Key (`Arrow `Up, []) -> k_update_zip Zipper.prev
-    | Command, `Key (`Arrow `Left, []) -> k_update_zip Zipper.zoom_out
-    | Command, `Key (`Arrow `Right, []) -> k_update_zip Zipper.zoom_in
-    | Command, `Key (`Delete, []) -> k_update_zip Zipper.suppr_current
+    | Command, `Key (`ASCII 'd', []) -> k_update_zip Task_zipper.toggle_done
+    | Command, `Key (`Arrow `Down, []) -> k_update_zip Task_zipper.next
+    | Command, `Key (`Arrow `Up, []) -> k_update_zip Task_zipper.prev
+    | Command, `Key (`Arrow `Left, []) -> k_update_zip Task_zipper.zoom_out
+    | Command, `Key (`Arrow `Right, []) -> k_update_zip Task_zipper.zoom_in
+    | Command, `Key (`Delete, []) -> k_update_zip Task_zipper.suppr_current
     | Command, `Key (`Enter, []) -> loop (State.enter_edit_mode state)
     | _ -> loop state
   in
