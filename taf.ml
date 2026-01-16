@@ -64,7 +64,13 @@ module List_zipper = struct
         f ~head:true acc' h
     in
     List.fold_left (f ~head:false) acc lr
-  
+
+  let remove_head (ls, rs) =
+    (ls,
+     match rs with
+     | [] -> []
+     | _ :: t -> t)
+
   let to_list (ls, rs) = List.rev_append ls rs
 end
 
@@ -131,6 +137,9 @@ module Zipper = struct
     match z.parent with
     | None -> { z.focus with children = List_zipper.to_list z.items }
     | Some _ -> root (zoom_out z)
+
+  let suppr_current z =
+    { z with items = List_zipper.remove_head z.items }
 end
 
 (* module Hist_zipper = struct *)
@@ -161,8 +170,6 @@ module State = struct
       mode = Edit "" ;
     }
 
-  let toggle_done state = { state with zip = Zipper.toggle_done state.zip }
-  
   let leave_edit_mode state =
     match state.mode with
     | Command -> state
@@ -180,11 +187,7 @@ module State = struct
     | Command -> state
     | Edit s -> { state with mode = Edit (String.(sub s 0 (max 0 (length s - 1)))) }
   
-  let next state = { state with zip = Zipper.next state.zip }
-  let prev state = { state with zip = Zipper.prev state.zip }
-
-  let zoom_in state = { state with zip = Zipper.zoom_in state.zip }
-  let zoom_out state = { state with zip = Zipper.zoom_out state.zip }
+  let update_zip f state = { state with zip = f state.zip }
 
   let render_breadcrumb { zip ; _ } =
     let path_elts = List.map (fun t -> t.text) (Zipper.current_path zip) in
@@ -262,6 +265,7 @@ let main () =
   let term = Notty_unix.Term.create () in
 
   let rec loop state =
+    let k_update_zip f = loop (State.update_zip f state) in
     let img = State.render state in
     Notty_unix.Term.image term img ;
 
@@ -271,11 +275,12 @@ let main () =
     | Edit _, `Key (`ASCII c, []) -> loop (State.add_char state c)
     | Command, `Key (`ASCII 'q', []) -> state
     | Command, `Key (`ASCII 'i', []) -> loop (State.insert_empty_task state)
-    | Command, `Key (`ASCII 'd', []) -> loop (State.toggle_done state)
-    | Command, `Key (`Arrow `Down, []) -> loop (State.next state)
-    | Command, `Key (`Arrow `Up, []) -> loop (State.prev state)
-    | Command, `Key (`Arrow `Left, []) -> loop (State.zoom_out state)
-    | Command, `Key (`Arrow `Right, []) -> loop (State.zoom_in state)
+    | Command, `Key (`ASCII 'd', []) -> k_update_zip Zipper.toggle_done
+    | Command, `Key (`Arrow `Down, []) -> k_update_zip Zipper.next
+    | Command, `Key (`Arrow `Up, []) -> k_update_zip Zipper.prev
+    | Command, `Key (`Arrow `Left, []) -> k_update_zip Zipper.zoom_out
+    | Command, `Key (`Arrow `Right, []) -> k_update_zip Zipper.zoom_in
+    | Command, `Key (`Delete, []) -> k_update_zip Zipper.suppr_current
     | _ -> loop state
   in
   let final_state = loop state in
