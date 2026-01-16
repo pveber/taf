@@ -274,6 +274,45 @@ module State = struct
     I.vcat [breadcrumb; I.void 0 1; tasks; I.void 0 1; help]
 end
 
+let appname = "taf"
+
+module Dirs = struct
+  type t = {
+    config : string ;
+    data : string ;
+  }
+
+  let mksubdir path dir =
+    let path = Filename.concat path dir in
+    if not (Sys.file_exists path) then Unix.mkdir path 0o700 ;
+    path
+
+  let create () =
+    let xdg = Xdg.create ~env:Sys.getenv_opt () in
+    let config = mksubdir (Xdg.config_dir xdg) appname in
+    let data = mksubdir (Xdg.data_dir xdg) appname in
+    { config ; data }
+
+  let config_path dirs =
+    Filename.concat dirs.config "config.toml"
+
+  let data_path dirs =
+    Filename.concat dirs.data "tasks.json"
+end
+
+(* module Config = struct *)
+(*   type t = { *)
+(*     contexts : string list ; *)
+(*   } *)
+
+(*   let load dirs = *)
+(*     let path = Dirs.config_path dirs in *)
+(*     if not (Sys.file_exists path) then [] *)
+(*     else *)
+(*       let conf = Otoml.Parser.from_file path in *)
+(*       Otoml.(find conf (get_array get_string) ["contexts"]) *)
+(* end *)
+
 let load_from_file filename =
   In_channel.with_open_text filename (fun ic ->
       Yojson.Safe.from_channel ic
@@ -281,17 +320,8 @@ let load_from_file filename =
       |> Result.get_ok
     )
 
-let data_dir () =
-  let xdg = Xdg.create ~env:Sys.getenv_opt () in
-  let path = Filename.concat (Xdg.data_dir xdg) "taf" in
-  if not (Sys.file_exists path) then Unix.mkdir path 0o700 ;
-  path
-
-let backup_path () =
-  Filename.concat (data_dir ()) "tasks.json"
-
-let load_task_tree () =
-  let filename = backup_path () in
+let load_task_tree dirs =
+  let filename = Dirs.data_path dirs in
   let root_task =
     if Sys.file_exists filename then
       load_from_file filename
@@ -299,15 +329,16 @@ let load_task_tree () =
   in
   Zipper.make root_task
 
-let save_task_tree (state : State.t) =
-  let filename = backup_path () in
-  let json = task_to_yojson (Zipper.root state.zip) in
+let save_task_tree zip dirs =
+  let filename = Dirs.data_path dirs in
+  let json = task_to_yojson (Zipper.root zip) in
   Out_channel.with_open_text filename (fun oc ->
       Yojson.Safe.to_channel oc json
     )
 
 let main () =
-  let zip = load_task_tree () in
+  let dirs = Dirs.create () in
+  let zip = load_task_tree dirs in
   let state = State.init zip in
   let term = Notty_unix.Term.create () in
 
@@ -332,6 +363,6 @@ let main () =
     | _ -> loop state
   in
   let final_state = loop state in
-  save_task_tree final_state
+  save_task_tree final_state.zip dirs
 
 let () = main ()
