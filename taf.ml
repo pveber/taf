@@ -180,7 +180,18 @@ module State = struct
   let add_char state c =
     match state.mode with
     | Command -> state
-    | Edit s -> { state with mode = Edit (Printf.sprintf "%s%c" s c) }
+    | Edit s ->
+      let s' =
+        let b = Buffer.create (4 + String.length s) in
+        Buffer.add_string b s ;
+        (
+          match c with
+          | `ASCII c -> Buffer.add_char b c
+          | `Uchar u -> Buffer.add_utf_8_uchar b u
+        ) ;
+        Buffer.contents b
+      in
+      { state with mode = Edit s' }
 
   let remove_char state =
     match state.mode with
@@ -272,7 +283,7 @@ let main () =
     match state.mode, Notty_unix.Term.event term with
     | Edit _, `Key (`Enter, _) -> loop (State.leave_edit_mode state)
     | Edit _, `Key (`Backspace, _) -> loop (State.remove_char state)
-    | Edit _, `Key (`ASCII c, []) -> loop (State.add_char state c)
+    | Edit _, `Key ((`ASCII _ | `Uchar _) as c, []) -> loop (State.add_char state c)
     | Command, `Key (`ASCII 'q', []) -> state
     | Command, `Key (`ASCII 'i', []) -> loop (State.insert_empty_task state)
     | Command, `Key (`ASCII 'd', []) -> k_update_zip Zipper.toggle_done
