@@ -194,6 +194,31 @@ module Task_zipper = struct
     { z with items = List_zipper.remove_head z.items }
 end
 
+
+let utf8_add_char s p c =
+  let buf = Buffer.create (2 * String.length s) in
+  let add = function
+    | `ASCII c -> Buffer.add_char buf c
+    | `Uchar u -> Buffer.add_utf_8_uchar buf u
+  in
+  let f i u =
+    if i = p then add c ;
+    Buffer.add_string buf u ;
+    i + 1
+  in
+  let last_pos = Uuseg_string.fold_utf_8 `Grapheme_cluster f 0 s in
+  if p = last_pos then add c ;
+  Buffer.contents buf
+
+let utf8_remove_prec_char s p =
+  let buf = Buffer.create (String.length s) in
+  let f i u =
+    if i <> p - 1 then Buffer.add_string buf u ;
+    i + 1
+  in
+  let _ = Uuseg_string.fold_utf_8 `Grapheme_cluster f 0 s in
+  Buffer.contents buf
+
 (* module Hist_zipper = struct *)
 (*   (\* invariant: List_zipper not empty *\) *)
 (*   type t = Zipper.t List_zipper.t *)
@@ -206,7 +231,7 @@ module State = struct
 
   type mode =
     | Command
-    | Edit of string
+    | Edit of string * int
 
   type t = {
     contexts : (string * Task_zipper.t) List_zipper.t ; (* invariant: cannot be empty *)
@@ -238,13 +263,13 @@ module State = struct
     let t = mk_task "" in
     {
       contexts = upd_ctx state.contexts (fun tz -> Task_zipper.insert_task tz t) ;
-      mode = Edit "" ;
+      mode = Edit ("", 0) ;
     }
 
   let leave_edit_mode state =
     match state.mode with
     | Command -> state
-    | Edit s ->
+    | Edit (s, _) ->
       { contexts = upd_ctx state.contexts (fun tz -> Task_zipper.set_cursor_text tz s) ;
         mode = Command }
 
@@ -259,28 +284,19 @@ module State = struct
     | Command ->
       match task_cursor state with
       | None -> state
-      | Some t -> { state with mode = Edit t.text }
+      | Some t -> { state with mode = Edit (t.text, String.length t.text) }
 
   let add_char state c =
     match state.mode with
     | Command -> state
-    | Edit s ->
-      let s' =
-        let b = Buffer.create (4 + String.length s) in
-        Buffer.add_string b s ;
-        (
-          match c with
-          | `ASCII c -> Buffer.add_char b c
-          | `Uchar u -> Buffer.add_utf_8_uchar b u
-        ) ;
-        Buffer.contents b
-      in
-      { state with mode = Edit s' }
+    | Edit (s, p) ->
+      let s' = utf8_add_char s p c in
+      { state with mode = Edit (s', p + 1) }
 
-  let remove_char state =
+  let remove_prec_char state =
     match state.mode with
     | Command -> state
-    | Edit s -> { state with mode = Edit (remove_last_utf8 s) }
+    | Edit (s, p) -> { state with mode = Edit (utf8_remove_prec_char s p, p - 1) }
 
   let previous_context state =
     { state with contexts = List_zipper.prev state.contexts }
@@ -308,7 +324,7 @@ module State = struct
     let text = match task.text, mode with
       | "", Command -> "(empty)"
       | s,  Command -> s
-      | s,  Edit field ->
+      | s,  Edit (field, _) ->
         if has_focus then field else s
     in
     let line =
@@ -423,7 +439,7 @@ let main () =
 
     match state.mode, Notty_unix.Term.event term with
     | Edit _, `Key (`Enter, _) -> loop (State.leave_edit_mode state)
-    | Edit _, `Key (`Backspace, _) -> loop (State.remove_char state)
+    | Edit _, `Key (`Backspace, _) -> loop (State.remove_prec_char state)
     | Edit _, `Key ((`ASCII _ | `Uchar _) as c, []) -> loop (State.add_char state c)
     | Command, `Key (`ASCII 'q', []) -> state
     | Command, `Key (`ASCII 'i', []) -> loop (State.insert_empty_task state)
