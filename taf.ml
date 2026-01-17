@@ -194,6 +194,8 @@ module Task_zipper = struct
     { z with items = List_zipper.remove_head z.items }
 end
 
+let utf8_string_length s =
+  Uuseg_string.fold_utf_8 `Grapheme_cluster (fun i _ -> i + 1) 0 s
 
 let utf8_add_char s p c =
   let buf = Buffer.create (2 * String.length s) in
@@ -284,7 +286,7 @@ module State = struct
     | Command ->
       match task_cursor state with
       | None -> state
-      | Some t -> { state with mode = Edit (t.text, String.length t.text) }
+      | Some t -> { state with mode = Edit (t.text, utf8_string_length t.text) }
 
   let add_char state c =
     match state.mode with
@@ -316,30 +318,47 @@ module State = struct
     let breadcrumb = I.string A.(fg lightblue) breadcrumb in
     I.hcat [ context ; breadcrumb ]
 
+  let edited_text_attr = A.(bg green ++ fg black)
+
+  let render_edited_field s p =
+    let bef = Buffer.create (String.length s) in
+    let und = Buffer.create (String.length s) in
+    let aft = Buffer.create (String.length s) in
+    let f i u =
+      let buf = if i < p then bef else if i = p then und else aft in
+      Buffer.add_string buf u ;
+      i + 1
+    in
+    let last_pos = Uuseg_string.fold_utf_8 `Grapheme_cluster f 0 s in
+    if last_pos = p then Buffer.add_char und ' ' ;
+    I.hcat [
+      I.string edited_text_attr (Buffer.contents bef) ;
+      I.string A.(bg lightgreen ++ fg black) (Buffer.contents und) ;
+      I.string edited_text_attr (Buffer.contents aft) ;
+    ]
+
   let render_task ~has_focus ~mode task =
-    let checkbox = match task.status with
-      | Todo -> "[ ]"
-      | Done -> "[X]"
+    let text_attr =
+      match has_focus, mode with
+      | true, Command -> A.(bg blue ++ fg white)
+      | true, Edit _ -> edited_text_attr
+      | false, _ -> A.empty
     in
-    let text = match task.text, mode with
-      | "", Command -> "(empty)"
-      | s,  Command -> s
-      | s,  Edit (field, _) ->
-        if has_focus then field else s
+    let checkbox =
+      I.string text_attr (
+        match task.status with
+        | Todo -> "- [ ] "
+        | Done -> "- [X] "
+      )
     in
-    let line =
-      Printf.sprintf "%s %s%s"
-        checkbox text
-        (if task.children <> [] then " ▶ " else "")
+    let field = match has_focus, mode with
+      | true, Edit (s, p) -> render_edited_field s p
+      | _ -> I.string text_attr task.text
     in
-    let attr =
-      if has_focus then
-        match mode with
-        | Edit _ -> A.(bg green ++ fg black)
-        | Command -> A.(bg blue ++ fg white)
-      else A.empty
-    in
-    I.string attr line
+    let line = I.(checkbox <|> field) in
+    if task.children <> [] then
+      I.(line <|> string text_attr " ▶ ")
+    else line
 
   let render_tasks state =
     let task_images =
