@@ -275,6 +275,18 @@ module State = struct
       { contexts = upd_ctx state.contexts (fun tz -> Task_zipper.set_cursor_text tz s) ;
         mode = Command }
 
+  let move_cursor_left state =
+    match state.mode with
+    | Command -> state
+    | Edit (s, p) -> { state with mode = Edit (s, Int.max 0 (p - 1)) }
+
+  let move_cursor_right state =
+    match state.mode with
+    | Command -> state
+    | Edit (s, p) ->
+      let n = utf8_string_length s in
+      { state with mode = Edit (s, Int.min n (p + 1)) }
+
   let task_cursor state =
     List_zipper.head state.contexts
     |> Option.map snd
@@ -460,6 +472,8 @@ let main () =
     | Edit _, `Key (`Enter, _) -> loop (State.leave_edit_mode state)
     | Edit _, `Key (`Backspace, _) -> loop (State.remove_prec_char state)
     | Edit _, `Key ((`ASCII _ | `Uchar _) as c, []) -> loop (State.add_char state c)
+    | Edit _, `Key (`Arrow `Left, []) -> loop (State.move_cursor_left state)
+    | Edit _, `Key (`Arrow `Right, []) -> loop (State.move_cursor_right state)
     | Command, `Key (`ASCII 'q', []) -> state
     | Command, `Key (`ASCII 'i', []) -> loop (State.insert_empty_task state)
     | Command, `Key (`ASCII 'd', []) -> k_update_zip Task_zipper.toggle_done
