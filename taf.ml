@@ -425,4 +425,15 @@ let main () =
   let final_state = loop state in
   save_task_tree final_state dirs
 
-let () = main ()
+open Cmdliner
+open Cmdliner.Term.Syntax
+
+let main_command =
+  let info = Cmd.info appname in
+  let term =
+    let+ unit = Term.const () in
+    main unit
+  in
+  Cmd.v info term
+
+let () = exit @@ Cmd.eval main_command
