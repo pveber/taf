@@ -475,6 +475,10 @@ let main () =
     | Edit _, `Key (`Arrow `Left, []) -> loop (State.move_cursor_left state)
     | Edit _, `Key (`Arrow `Right, []) -> loop (State.move_cursor_right state)
     | Command, `Key (`ASCII 'q', []) -> state
+    | Command, `Key (`ASCII 's', []) -> (
+        save_task_tree state dirs ;
+        loop state
+      )
     | Command, `Key (`ASCII 'i', []) -> loop (State.insert_empty_task state)
     | Command, `Key (`ASCII 'd', []) -> k_update_zip Task_zipper.toggle_done
     | Command, `Key (`Arrow `Down, []) -> k_update_zip Task_zipper.next
