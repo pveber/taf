@@ -282,6 +282,12 @@ module State = struct
     | Command -> state
     | Edit s -> { state with mode = Edit (remove_last_utf8 s) }
 
+  let previous_context state =
+    { state with contexts = List_zipper.prev state.contexts }
+
+  let next_context state =
+    { state with contexts = List_zipper.next state.contexts }
+
   let render_breadcrumb state =
     let context, tz = Option.get (List_zipper.head state.contexts) in
     let path_elts = List.map (fun t -> t.text) (Task_zipper.current_path tz) in
@@ -428,6 +434,8 @@ let main () =
     | Command, `Key (`Arrow `Up, [`Meta]) -> k_update_zip Task_zipper.move_up
     | Command, `Key (`Arrow `Left, []) -> k_update_zip Task_zipper.zoom_out
     | Command, `Key (`Arrow `Right, []) -> k_update_zip Task_zipper.zoom_in
+    | Command, `Key (`Page `Up, []) -> loop (State.previous_context state)
+    | Command, `Key (`Page `Down, []) -> loop (State.next_context state)
     | Command, `Key (`Delete, []) -> k_update_zip Task_zipper.suppr_current
     | Command, `Key (`Enter, []) -> loop (State.enter_edit_mode state)
     | _ -> loop state
