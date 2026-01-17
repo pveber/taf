@@ -258,8 +258,14 @@ module State = struct
   let render_breadcrumb state =
     let context, tz = Option.get (List_zipper.head state.contexts) in
     let path_elts = List.map (fun t -> t.text) (Task_zipper.current_path tz) in
-    let breadcrumb = String.concat " > " (context :: path_elts) in
-    I.string A.(fg lightblue) breadcrumb
+    let context = I.string A.(fg lightblue ++ st bold) context in
+    let breadcrumb = match path_elts with
+      | [] -> failwith "should not happen: there is always a root task"
+      | _ :: [] -> ""
+      | _root :: t -> " :: " ^ String.concat " > " t
+    in
+    let breadcrumb = I.string A.(fg lightblue) breadcrumb in
+    I.hcat [ context ; breadcrumb ]
 
   let render_task ~has_focus ~mode task =
     let checkbox = match task.status with
