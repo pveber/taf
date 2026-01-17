@@ -443,10 +443,18 @@ let main () =
   let final_state = loop state in
   save_task_tree final_state dirs
 
+let mk_root () = mk_task "•"
+
 let init ~contexts =
-  let db = List.map (fun c -> c, mk_task "•") contexts in
+  let db = List.map (fun c -> c, mk_root ()) contexts in
   let dirs = Dirs.create () in
   save_db db dirs
+
+let context_add ~context_name =
+  let dirs = Dirs.create () in
+  let db = load_task_tree dirs in
+  let db' = db @ [ context_name, mk_root () ] in
+  save_db db' dirs
 
 open Cmdliner
 open Cmdliner.Term.Syntax
@@ -465,11 +473,27 @@ let init_command =
   in
   Cmd.v info term
 
+let context_add_cmd =
+  let info = Cmd.info "add" in
+  let term =
+    let+ context_name =
+      let doc = "Name of context to add" in
+      Arg.(required & pos 0 (some string) None & info [] ~doc)
+    in
+    context_add ~context_name
+  in
+  Cmd.v info term
+
+let context_command =
+  let info = Cmd.info "context" in
+  Cmd.group info [context_add_cmd]
+
 let command =
   let info = Cmd.info appname in
   let default =
     let+ unit = Term.const () in
     main unit
-  in  Cmd.group ~default:default info [ init_command ]
+  in
+  Cmd.group ~default:default info [ init_command ; context_command ]
 
 let () = exit @@ Cmd.eval command
