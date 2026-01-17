@@ -500,7 +500,7 @@ let save_db db dirs =
   let filename = Dirs.data_path dirs in
   let json = db_to_yojson db in
   Out_channel.with_open_text filename (fun oc ->
-      Yojson.Safe.to_channel oc json
+      Yojson.Safe.pretty_to_channel oc json
     )
 
 let save_task_tree state dirs (config : Config.t) =
