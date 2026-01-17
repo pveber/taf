@@ -23,6 +23,9 @@ let mk_task text = {
   children = [];
 }
 
+let children_complete t =
+  List.for_all (fun x -> x.status = Done) t.children
+
 let is_continuation_byte c =
   Char.code c land 0b1100_0000 = 0b1000_0000
 
@@ -165,8 +168,12 @@ module Task_zipper = struct
     | Some t ->
       let t =
         match t.status with
-        | Todo -> { t with status = Done ; completed_at = Some (now ()) }
-        | Done -> { t with status = Todo ; completed_at = None } in
+        | Todo ->
+          if children_complete t then
+            { t with status = Done ; completed_at = Some (now ()) }
+          else t
+        | Done -> { t with status = Todo ; completed_at = None }
+      in
       { z with items = List_zipper.replace_head z.items t }
 
   let at_root z = Option.is_none z.parent
