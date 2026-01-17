@@ -52,6 +52,14 @@ module List_zipper = struct
     | ([], _) as lz -> lz
     | (h :: t, rs) -> (t, h :: rs)
 
+  let shift_left = function
+    | ((_, []) | ([], _))as lz -> lz
+    | (lh :: lt, rh :: rt) -> (lt, rh :: lh :: rt)
+
+  let shift_right = function
+    | ((_, []) | (_, _ :: []))as lz -> lz
+    | (ls, e1 :: e2 :: t) -> (e2 :: ls, e1 :: t)
+
   let head = function
     | (_, []) -> None
     | (_, h :: _) -> Some h
@@ -108,8 +116,13 @@ module Task_zipper = struct
     parent = None ;
   }
 
-  let prev z = { z with items = List_zipper.prev z.items }
-  let next z = { z with items = List_zipper.next z.items }
+  let upd_items z f = { z with items = f z.items }
+
+  let prev z = upd_items z List_zipper.prev
+  let next z = upd_items z List_zipper.next
+
+  let move_up z = upd_items z List_zipper.shift_left
+  let move_down z = upd_items z List_zipper.shift_right
 
   let zoom_in z = match List_zipper.head z.items with
     | None -> z
@@ -390,6 +403,8 @@ let main () =
     | Command, `Key (`ASCII 'd', []) -> k_update_zip Task_zipper.toggle_done
     | Command, `Key (`Arrow `Down, []) -> k_update_zip Task_zipper.next
     | Command, `Key (`Arrow `Up, []) -> k_update_zip Task_zipper.prev
+    | Command, `Key (`Arrow `Down, [`Meta]) -> k_update_zip Task_zipper.move_down
+    | Command, `Key (`Arrow `Up, [`Meta]) -> k_update_zip Task_zipper.move_up
     | Command, `Key (`Arrow `Left, []) -> k_update_zip Task_zipper.zoom_out
     | Command, `Key (`Arrow `Right, []) -> k_update_zip Task_zipper.zoom_in
     | Command, `Key (`Delete, []) -> k_update_zip Task_zipper.suppr_current
