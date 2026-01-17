@@ -15,6 +15,13 @@ type db = (string * task) list
 
 let now () = Unix.gettimeofday ()
 
+let dief fmt =
+  let die msg =
+    prerr_endline msg ;
+    exit 1
+  in
+  Printf.ksprintf die fmt
+
 let mk_task text = {
   text ;
   status = Todo;
@@ -385,14 +392,17 @@ let load_task_tree dirs =
   let filename = Dirs.data_path dirs in
   if Sys.file_exists filename then
     load_from_file filename
-  else failwith "run taf init first!"
+  else dief "Please run `taf init` first!"
 
-let save_task_tree state dirs =
+let save_db db dirs =
   let filename = Dirs.data_path dirs in
-  let json = db_to_yojson (State.to_db state) in
+  let json = db_to_yojson db in
   Out_channel.with_open_text filename (fun oc ->
       Yojson.Safe.to_channel oc json
     )
+
+let save_task_tree state dirs =
+  save_db (State.to_db state) dirs
 
 let main () =
   let dirs = Dirs.create () in
@@ -425,15 +435,33 @@ let main () =
   let final_state = loop state in
   save_task_tree final_state dirs
 
+let init ~contexts =
+  let db = List.map (fun c -> c, mk_task "•") contexts in
+  let dirs = Dirs.create () in
+  save_db db dirs
+
 open Cmdliner
 open Cmdliner.Term.Syntax
 
-let main_command =
-  let info = Cmd.info appname in
+let init_command =
+  let doc = {|Initializes configuration files to use taf. It is necessary to define the initial contexts for your tasks.|}
+  in
+  let info = Cmd.info ~doc "init" in
   let term =
-    let+ unit = Term.const () in
-    main unit
+    let+ contexts =
+      let doc = "A list of strings separated by commas, each string is a name for a context" in
+      let i = Arg.info [] ~doc ~docv:"CONTEXTS" in
+      Arg.(required & pos 0 (some (list string)) None i)
+    in
+    init ~contexts
   in
   Cmd.v info term
 
-let () = exit @@ Cmd.eval main_command
+let command =
+  let info = Cmd.info appname in
+  let default =
+    let+ unit = Term.const () in
+    main unit
+  in  Cmd.group ~default:default info [ init_command ]
+
+let () = exit @@ Cmd.eval command
