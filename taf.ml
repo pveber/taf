@@ -55,7 +55,7 @@ module List_zipper = struct
   let singleton x = ([], [ x ])
 
   let next = function
-    | (_, []) as lz -> lz
+    | ((_, []) | (_, _ :: [])) as lz -> lz
     | (ls, h :: t) -> (h :: ls, t)
 
   let prev = function
