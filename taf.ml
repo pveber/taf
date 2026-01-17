@@ -22,6 +22,13 @@ let dief fmt =
   in
   Printf.ksprintf die fmt
 
+let cmdf fmt =
+  Printf.ksprintf
+    (fun cmd ->
+       let code = Sys.command cmd in
+       if code <> 0 then dief "Command %S exited with code %d" cmd code)
+    fmt
+
 let mk_task text = {
   text ;
   status = Todo;
@@ -417,18 +424,15 @@ module Dirs = struct
   let config_path dirs =
     Filename.concat dirs.config "config.toml"
 
+  let data_file_name = "taf.json"
+
   let data_path dirs =
-    Filename.concat dirs.data "tasks.json"
+    Filename.concat dirs.data data_file_name
 end
 
 module Config = struct
-  type git_source = {
-    repo_url : string ;
-    repo_path : string ;
-  }
-
   type t = {
-    source : [`Local | `Git of git_source]
+    source : [`Local | `Git of string]
   }
 
   let local () = { source = `Local }
@@ -444,8 +448,7 @@ module Config = struct
         | "local" -> `Local
         | "git" -> (
             let repo_url = Otoml.(find conf get_string ["git" ; "url"]) in
-            let repo_path = Otoml.(find conf get_string ["git" ; "path"]) in
-            `Git { repo_url ; repo_path }
+            `Git repo_url
           )
         | s -> dief "Unknown source type %S" s
       in
@@ -457,7 +460,12 @@ module Config = struct
       "source", (
         match source with
         | `Local -> TomlString "local"
-        | _ -> assert false
+        | `Git _url -> TomlString "git"
+      ) ;
+      "git", TomlTable (
+        match source with
+        | `Local -> []
+        | `Git url -> ["url", TomlString url]
       )
     ]
 
@@ -475,10 +483,17 @@ let load_from_file filename =
       |> Result.get_ok
     )
 
-let load_task_tree dirs =
+let load_task_tree dirs (cfg : Config.t) =
   let filename = Dirs.data_path dirs in
-  if Sys.file_exists filename then
+  if Sys.file_exists filename then (
+    (
+      match cfg.source with
+      | `Local -> ()
+      | `Git _ ->
+        cmdf "cd %s && git pull" dirs.data
+    ) ;
     load_from_file filename
+  )
   else dief "Please run `taf init` first!"
 
 let save_db db dirs =
@@ -488,13 +503,20 @@ let save_db db dirs =
       Yojson.Safe.to_channel oc json
     )
 
-let save_task_tree state dirs =
-  save_db (State.to_db state) dirs
+let save_task_tree state dirs (config : Config.t) =
+  save_db (State.to_db state) dirs ;
+  match config.source with
+  | `Local -> ()
+  | `Git _ ->
+    cmdf "cd %s && \
+          git add %s && \
+          git commit -m 'taf' && \
+          git push" dirs.data Dirs.data_file_name
 
 let main () =
   let dirs = Dirs.create () in
-  let _config = Config.load dirs in
-  let db = load_task_tree dirs in
+  let config = Config.load dirs in
+  let db = load_task_tree dirs config in
   let state = State.init db in
   let term = Notty_unix.Term.create () in
 
@@ -511,7 +533,7 @@ let main () =
     | Edit _, `Key (`Arrow `Right, []) -> loop (State.move_cursor_right state)
     | Command, `Key (`ASCII 'q', []) -> state
     | Command, `Key (`ASCII 's', []) -> (
-        save_task_tree state dirs ;
+        save_task_tree state dirs config ;
         loop state
       )
     | Command, `Key (`ASCII 'i', []) -> loop (State.insert_empty_task state)
@@ -529,20 +551,36 @@ let main () =
     | _ -> loop state
   in
   let final_state = loop state in
-  save_task_tree final_state dirs
+  save_task_tree final_state dirs config
 
 let mk_root () = mk_task "•"
 
-let init ~contexts =
-  let config = Config.local () in
-  let db = List.map (fun c -> c, mk_root ()) contexts in
+let init ~contexts ~git_url =
+  let config = match git_url with
+    | None -> Config.local ()
+    | Some repo_url -> Config.{ source = `Git repo_url }
+  in
   let dirs = Dirs.create () in
   Config.save config dirs ;
-  save_db db dirs
+  let db = List.map (fun c -> c, mk_root ()) contexts in
+  match config.source with
+  | `Local -> save_db db dirs
+  | `Git repo_url -> (
+      cmdf "cd %s && \
+            git clone --filter=blob:none --no-checkout %s . && \
+            git sparse-checkout init --no-cone && \
+            git sparse-checkout set %s && \
+            git checkout"
+        dirs.data
+        repo_url Dirs.data_file_name ;
+      save_db db dirs ;
+      ignore @@ cmdf ""
+    )
 
 let context_add ~context_name =
   let dirs = Dirs.create () in
-  let db = load_task_tree dirs in
+  let config = Config.load dirs in
+  let db = load_task_tree dirs config in
   let db' = db @ [ context_name, mk_root () ] in
   save_db db' dirs
 
@@ -558,8 +596,12 @@ let init_command =
       let doc = "A list of strings separated by commas, each string is a name for a context" in
       let i = Arg.info [] ~doc ~docv:"CONTEXTS" in
       Arg.(required & pos 0 (some (list string)) None i)
+    and+ git_url =
+      let doc = "URL pointing to a git repository where data will be backed up" in
+      let i = Arg.info ["git-repo"] ~doc ~docv:"URL" in
+      Arg.(value & opt (some string) None i)
     in
-    init ~contexts
+    init ~contexts ~git_url
   in
   Cmd.v info term
 
