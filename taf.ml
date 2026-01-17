@@ -421,18 +421,52 @@ module Dirs = struct
     Filename.concat dirs.data "tasks.json"
 end
 
-(* module Config = struct *)
-(*   type t = { *)
-(*     contexts : string list ; *)
-(*   } *)
+module Config = struct
+  type git_source = {
+    repo_url : string ;
+    repo_path : string ;
+  }
 
-(*   let load dirs = *)
-(*     let path = Dirs.config_path dirs in *)
-(*     if not (Sys.file_exists path) then [] *)
-(*     else *)
-(*       let conf = Otoml.Parser.from_file path in *)
-(*       Otoml.(find conf (get_array get_string) ["contexts"]) *)
-(* end *)
+  type t = {
+    source : [`Local | `Git of git_source]
+  }
+
+  let local () = { source = `Local }
+
+  let load dirs =
+    let path = Dirs.config_path dirs in
+    if not (Sys.file_exists path) then
+      dief "Please run `taf init` first!"
+    else
+      let conf = Otoml.Parser.from_file path in
+      let source =
+        match Otoml.(find conf get_string ["source"]) with
+        | "local" -> `Local
+        | "git" -> (
+            let repo_url = Otoml.(find conf get_string ["git" ; "url"]) in
+            let repo_path = Otoml.(find conf get_string ["git" ; "path"]) in
+            `Git { repo_url ; repo_path }
+          )
+        | s -> dief "Unknown source type %S" s
+      in
+      { source }
+
+  let to_otoml { source } =
+    let open Otoml in
+    TomlTable [
+      "source", (
+        match source with
+        | `Local -> TomlString "local"
+        | _ -> assert false
+      )
+    ]
+
+  let save cfg dirs =
+    let path = Dirs.config_path dirs in
+    Out_channel.with_open_text path (fun oc ->
+        Otoml.Printer.to_channel oc (to_otoml cfg)
+      )
+end
 
 let load_from_file filename =
   In_channel.with_open_text filename (fun ic ->
@@ -459,6 +493,7 @@ let save_task_tree state dirs =
 
 let main () =
   let dirs = Dirs.create () in
+  let _config = Config.load dirs in
   let db = load_task_tree dirs in
   let state = State.init db in
   let term = Notty_unix.Term.create () in
@@ -499,8 +534,10 @@ let main () =
 let mk_root () = mk_task "•"
 
 let init ~contexts =
+  let config = Config.local () in
   let db = List.map (fun c -> c, mk_root ()) contexts in
   let dirs = Dirs.create () in
+  Config.save config dirs ;
   save_db db dirs
 
 let context_add ~context_name =
