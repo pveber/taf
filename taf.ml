@@ -291,7 +291,11 @@ module State = struct
       | s,  Edit field ->
         if has_focus then field else s
     in
-    let line = checkbox ^ " " ^ text in
+    let line =
+      Printf.sprintf "%s %s%s"
+        checkbox text
+        (if task.children <> [] then " ▶ " else "")
+    in
     let attr =
       if has_focus then
         match mode with
