@@ -10,6 +10,9 @@ type task = {
 }
 [@@deriving yojson]
 
+type db = (string * task) list
+[@@deriving yojson]
+
 let now () = Unix.gettimeofday ()
 
 let mk_task text = {
@@ -56,6 +59,10 @@ module List_zipper = struct
   let replace_head (ls, rs) x = match rs with
     | [] -> (ls, [ x ])
     | _ :: t -> (ls, x :: t)
+
+  let update_head ((ls, rs) as lz) f = match rs with
+    | [] -> lz
+    | h :: t -> (ls, f h :: t)
 
   let insert (ls, rs) x =
     match rs with
@@ -175,16 +182,35 @@ module State = struct
     | Edit of string
 
   type t = {
-    zip : Task_zipper.t ;
+    contexts : (string * Task_zipper.t) List_zipper.t ; (* invariant: cannot be empty *)
     mode : mode ;
   }
 
-  let init zip = { zip ; mode = Command }
+  let init db =
+    if db = [] then invalid_arg "there should be at least one context" ;
+    let contexts =
+      List.map (fun (name, task) -> (name, Task_zipper.make task)) db
+      |> List_zipper.make
+    in
+    { contexts ; mode = Command }
 
-  let insert_empty_task { zip ; _ } =
+  let to_db state =
+    List_zipper.to_list state.contexts
+    |> List.map (fun (ctx, tz) -> ctx, Task_zipper.root tz)
+
+  let ftz state = snd (Option.get (List_zipper.head state.contexts))
+
+  let upd_ctx contexts f =
+    List_zipper.update_head contexts (fun (name, tz) -> name, f tz)
+
+  (* update focused task zipper *)
+  let upd_ftz state f =
+    { state with contexts = upd_ctx state.contexts f }
+
+  let insert_empty_task state =
     let t = mk_task "" in
     {
-      zip = Task_zipper.insert_task zip t ;
+      contexts = upd_ctx state.contexts (fun tz -> Task_zipper.insert_task tz t) ;
       mode = Edit "" ;
     }
 
@@ -192,14 +218,19 @@ module State = struct
     match state.mode with
     | Command -> state
     | Edit s ->
-      { zip = Task_zipper.set_cursor_text state.zip s ;
+      { contexts = upd_ctx state.contexts (fun tz -> Task_zipper.set_cursor_text tz s) ;
         mode = Command }
+
+  let task_cursor state =
+    List_zipper.head state.contexts
+    |> Option.map snd
+    |> Fun.flip Option.bind Task_zipper.cursor
 
   let enter_edit_mode state =
     match state.mode with
     | Edit _ -> state
     | Command ->
-      match Task_zipper.cursor state.zip with
+      match task_cursor state with
       | None -> state
       | Some t -> { state with mode = Edit t.text }
 
@@ -223,14 +254,13 @@ module State = struct
     match state.mode with
     | Command -> state
     | Edit s -> { state with mode = Edit (remove_last_utf8 s) }
-  
-  let update_zip f state = { state with zip = f state.zip }
 
-  let render_breadcrumb { zip ; _ } =
-    let path_elts = List.map (fun t -> t.text) (Task_zipper.current_path zip) in
-    let breadcrumb = String.concat " > " path_elts in
+  let render_breadcrumb state =
+    let context, tz = Option.get (List_zipper.head state.contexts) in
+    let path_elts = List.map (fun t -> t.text) (Task_zipper.current_path tz) in
+    let breadcrumb = String.concat " > " (context :: path_elts) in
     I.string A.(fg lightblue) breadcrumb
-    
+
   let render_task ~has_focus ~mode task =
     let checkbox = match task.status with
       | Todo -> "[ ]"
@@ -254,7 +284,8 @@ module State = struct
 
   let render_tasks state =
     let task_images =
-      List_zipper.fold_right state.zip.items ~init:[] ~f:(fun ~head acc t ->
+      let tz = ftz state in
+      List_zipper.fold_right tz.items ~init:[] ~f:(fun ~head acc t ->
           render_task ~has_focus:head ~mode:state.mode t :: acc
         )
     in
@@ -264,9 +295,9 @@ module State = struct
 
   let render_help () =
     I.string
-      A.(fg (gray 12)) 
+      A.(fg (gray 12))
       "i:insert d:delete Enter:edit Space:toggle ←→:zoom ↑↓:move u:undo q:quit"
-  
+
   let render state =
     let breadcrumb = render_breadcrumb state in
     let tasks = render_tasks state in
@@ -316,34 +347,31 @@ end
 let load_from_file filename =
   In_channel.with_open_text filename (fun ic ->
       Yojson.Safe.from_channel ic
-      |> task_of_yojson
+      |> db_of_yojson
       |> Result.get_ok
     )
 
 let load_task_tree dirs =
   let filename = Dirs.data_path dirs in
-  let root_task =
-    if Sys.file_exists filename then
-      load_from_file filename
-    else mk_task "•"
-  in
-  Task_zipper.make root_task
+  if Sys.file_exists filename then
+    load_from_file filename
+  else failwith "run taf init first!"
 
-let save_task_tree zip dirs =
+let save_task_tree state dirs =
   let filename = Dirs.data_path dirs in
-  let json = task_to_yojson (Task_zipper.root zip) in
+  let json = db_to_yojson (State.to_db state) in
   Out_channel.with_open_text filename (fun oc ->
       Yojson.Safe.to_channel oc json
     )
 
 let main () =
   let dirs = Dirs.create () in
-  let zip = load_task_tree dirs in
-  let state = State.init zip in
+  let db = load_task_tree dirs in
+  let state = State.init db in
   let term = Notty_unix.Term.create () in
 
   let rec loop state =
-    let k_update_zip f = loop (State.update_zip f state) in
+    let k_update_zip f = loop (State.upd_ftz state f) in
     let img = State.render state in
     Notty_unix.Term.image term img ;
 
@@ -363,6 +391,6 @@ let main () =
     | _ -> loop state
   in
   let final_state = loop state in
-  save_task_tree final_state.zip dirs
+  save_task_tree final_state dirs
 
 let () = main ()
