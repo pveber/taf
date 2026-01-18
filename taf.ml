@@ -15,6 +15,9 @@ type db = (string * task) list
 
 let now () = Unix.gettimeofday ()
 
+let failwithf fmt =
+  Printf.ksprintf (fun msg -> raise (failwith msg)) fmt
+
 let dief fmt =
   let die msg =
     prerr_endline msg ;
@@ -26,7 +29,7 @@ let cmdf fmt =
   Printf.ksprintf
     (fun cmd ->
        let code = Sys.command cmd in
-       if code <> 0 then dief "Command %S exited with code %d" cmd code)
+       if code <> 0 then failwithf "Command %S exited with code %d" cmd code)
     fmt
 
 let mk_task text = {
@@ -570,7 +573,10 @@ let main () =
     | Command, `Key (`Enter, []) -> loop (State.enter_edit_mode state)
     | _ -> loop state
   in
-  loop state
+  try
+    Fun.protect (fun () -> loop state) ~finally:(fun () -> Notty_unix.Term.release term)
+  with
+  | Failure msg -> dief "internal error: %s" msg
 
 let mk_root () = mk_task "•"
 
