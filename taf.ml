@@ -528,9 +528,11 @@ let save_task_tree state dirs (config : Config.t) =
   | `Local -> ()
   | `Git _ ->
     cmdf "cd %s && \
-          git add %s && \
-          git commit -m 'taf' && \
-          git push" dirs.data Dirs.data_file_name
+          if ! git diff --quiet --exit-code %s; then \
+            git add %s && \
+            git commit -m 'taf' && \
+            git push; \
+         fi" dirs.data Dirs.data_file_name Dirs.data_file_name
 
 let main () =
   let dirs = Dirs.create () in
