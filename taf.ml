@@ -164,8 +164,18 @@ module Task_zipper = struct
     in
     loop z []
 
+  let force_upstream_todo z =
+    let rec loop z =
+      let parent = Option.map loop z.parent in
+      let focus = { z.focus with status = Todo ; completed_at = None } in
+      let items = z.items in
+      { focus ; parent ; items }
+    in
+    loop z
+
   let insert_task z t =
-    { z with items = List_zipper.insert z.items t }
+    let new_z = force_upstream_todo z in
+    { new_z with items = List_zipper.insert z.items t }
 
   let set_cursor_text z text =
     match List_zipper.head z.items with
@@ -175,15 +185,6 @@ module Task_zipper = struct
   let is_cursor_on_task z = Option.is_some (List_zipper.head z.items)
 
   let cursor z = List_zipper.head z.items
-
-  let force_upstream_todo z =
-    let rec loop z =
-      let parent = Option.map loop z.parent in
-      let focus = { z.focus with status = Todo ; completed_at = None } in
-      let items = z.items in
-      { focus ; parent ; items }
-    in
-    loop z
 
   let toggle_done z =
     match List_zipper.head z.items with
