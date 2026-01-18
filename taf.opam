@@ -11,7 +11,12 @@ doc: "https://url/to/documentation"
 bug-reports: "https://github.com/username/reponame/issues"
 depends: [
   "dune" {>= "3.20"}
+  "cmdliner"
+  "notty"
   "ocaml"
+  "otoml"
+  "uuseg"
+  "xdg"
   "odoc" {with-doc}
 ]
 build: [

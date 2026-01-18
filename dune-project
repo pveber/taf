@@ -19,7 +19,13 @@
  (name taf)
  (synopsis "A short synopsis")
  (description "A longer description")
- (depends ocaml)
+ (depends
+   cmdliner
+   notty
+   ocaml
+   otoml
+   uuseg
+   xdg)
  (tags
   ("add topics" "to describe" your project)))
 
