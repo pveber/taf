@@ -531,7 +531,11 @@ let main () =
     | Edit _, `Key ((`ASCII _ | `Uchar _) as c, []) -> loop (State.add_char state c)
     | Edit _, `Key (`Arrow `Left, []) -> loop (State.move_cursor_left state)
     | Edit _, `Key (`Arrow `Right, []) -> loop (State.move_cursor_right state)
-    | Command, `Key (`ASCII 'q', []) -> state
+    | Command, `Key (`ASCII 'q', []) -> (
+        save_task_tree state dirs config ;
+        ()
+      )
+    | Command, `Key (`ASCII 'C', [`Ctrl]) -> ()
     | Command, `Key (`ASCII 's', []) -> (
         save_task_tree state dirs config ;
         loop state
@@ -550,8 +554,7 @@ let main () =
     | Command, `Key (`Enter, []) -> loop (State.enter_edit_mode state)
     | _ -> loop state
   in
-  let final_state = loop state in
-  save_task_tree final_state dirs config
+  loop state
 
 let mk_root () = mk_task "•"
 
