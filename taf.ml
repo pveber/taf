@@ -556,15 +556,18 @@ let main () =
 let mk_root () = mk_task "•"
 
 let init ~contexts ~git_url =
+  let dirs = Dirs.create () in
+  let create_empty_db () =
+    let db = List.map (fun c -> c, mk_root ()) contexts in
+    save_db db dirs
+  in
   let config = match git_url with
     | None -> Config.local ()
     | Some repo_url -> Config.{ source = `Git repo_url }
   in
-  let dirs = Dirs.create () in
   Config.save config dirs ;
-  let db = List.map (fun c -> c, mk_root ()) contexts in
   match config.source with
-  | `Local -> save_db db dirs
+  | `Local -> create_empty_db ()
   | `Git repo_url -> (
       cmdf "cd %s && \
             git clone --filter=blob:none --no-checkout %s . && \
@@ -573,8 +576,7 @@ let init ~contexts ~git_url =
             git checkout"
         dirs.data
         repo_url Dirs.data_file_name ;
-      save_db db dirs ;
-      ignore @@ cmdf ""
+      if not (Sys.file_exists (Dirs.data_path dirs)) then create_empty_db () ;
     )
 
 let context_add ~context_name =
