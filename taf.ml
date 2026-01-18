@@ -176,19 +176,34 @@ module Task_zipper = struct
 
   let cursor z = List_zipper.head z.items
 
+  let force_upstream_todo z =
+    let rec loop z =
+      let parent = Option.map loop z.parent in
+      let focus = { z.focus with status = Todo ; completed_at = None } in
+      let items = z.items in
+      { focus ; parent ; items }
+    in
+    loop z
+
   let toggle_done z =
     match List_zipper.head z.items with
     | None -> z
     | Some t ->
-      let t =
+      let new_t, new_z =
         match t.status with
         | Todo ->
-          if children_complete t then
-            { t with status = Done ; completed_at = Some (now ()) }
-          else t
-        | Done -> { t with status = Todo ; completed_at = None }
+          let t =
+            if children_complete t then
+              { t with status = Done ; completed_at = Some (now ()) }
+            else t
+          in
+          t, z
+        | Done ->
+          let t = { t with status = Todo ; completed_at = None } in
+          let z = force_upstream_todo z in
+          t, z
       in
-      { z with items = List_zipper.replace_head z.items t }
+      { new_z with items = List_zipper.replace_head z.items new_t }
 
   let at_root z = Option.is_none z.parent
 
