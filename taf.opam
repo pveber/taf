@@ -15,6 +15,7 @@ depends: [
   "notty"
   "ocaml"
   "otoml"
+  "ppx_deriving_yojson"
   "uuseg"
   "xdg"
   "odoc" {with-doc}

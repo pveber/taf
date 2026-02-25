@@ -24,6 +24,7 @@
    notty
    ocaml
    otoml
+   ppx_deriving_yojson
    uuseg
    xdg)
  (tags
