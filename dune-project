@@ -21,7 +21,7 @@
  (description "A longer description")
  (depends
    cmdliner
-   notty
+   notty-community
    ocaml
    otoml
    ppx_deriving_yojson
